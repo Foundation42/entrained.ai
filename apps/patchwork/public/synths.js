@@ -191,30 +191,88 @@ function renderFlowDiagram(schema) {
     return;
   }
 
-  const available = container.clientWidth ? container.clientWidth - 24 : 900;
-  const width = Math.max(280 * sections.length, Math.max(available, 900));
-  const height = 420;
-  const svg = createSvg(width, height);
-
+  // Layout constants
+  const MODULES_PER_ROW = 4;
   const nodeWidth = 240;
   const nodeHeight = 120;
-  const gap = 80;
-  const startX = 40;
-  const y = height / 2 - nodeHeight / 2;
+  const hGap = 40;  // horizontal gap between modules
+  const vGap = 60;  // vertical gap between rows
+  const padding = 40;
 
-  // Arrows first
+  // Split sections into rows
+  const rows = [];
+  for (let i = 0; i < sections.length; i += MODULES_PER_ROW) {
+    rows.push(sections.slice(i, i + MODULES_PER_ROW));
+  }
+
+  // Calculate SVG dimensions
+  const maxModulesInRow = Math.max(...rows.map(r => r.length));
+  const width = maxModulesInRow * (nodeWidth + hGap) + padding * 2;
+  const height = rows.length * (nodeHeight + vGap) + padding * 2;
+  const svg = createSvg(width, height);
+
+  // Add arrow marker
   svg.appendChild(makeMarker(svg));
 
-  sections.forEach((section, idx) => {
-    const x = startX + idx * (nodeWidth + gap);
-    const node = drawNode(section, x, y, nodeWidth, nodeHeight);
-    svg.appendChild(node);
+  // Draw each row
+  rows.forEach((row, rowIdx) => {
+    const y = padding + rowIdx * (nodeHeight + vGap);
 
-    if (idx < sections.length - 1) {
-      const x2 = startX + (idx + 1) * (nodeWidth + gap);
-      const arrow = drawArrow(x + nodeWidth, y + nodeHeight / 2, x2, y + nodeHeight / 2);
-      svg.appendChild(arrow);
-    }
+    row.forEach((section, colIdx) => {
+      const x = padding + colIdx * (nodeWidth + hGap);
+      const node = drawNode(section, x, y, nodeWidth, nodeHeight);
+      svg.appendChild(node);
+
+      // Draw horizontal arrow to next module in same row
+      if (colIdx < row.length - 1) {
+        const x2 = x + nodeWidth + hGap;
+        const arrow = drawArrow(
+          x + nodeWidth,
+          y + nodeHeight / 2,
+          x2,
+          y + nodeHeight / 2
+        );
+        svg.appendChild(arrow);
+      }
+      // Draw connecting arrow to next row
+      else if (rowIdx < rows.length - 1) {
+        const nextRow = rows[rowIdx + 1];
+        const nextY = y + nodeHeight + vGap;
+        const nextX = padding;
+
+        // Vertical line down
+        const centerX = x + nodeWidth / 2;
+        const midY = y + nodeHeight + vGap / 2;
+
+        const line1 = drawArrow(
+          centerX,
+          y + nodeHeight,
+          centerX,
+          midY,
+          true // no arrowhead on first segment
+        );
+        svg.appendChild(line1);
+
+        // Horizontal line to start of next row
+        const line2 = drawArrow(
+          centerX,
+          midY,
+          nextX,
+          midY,
+          true // no arrowhead on middle segment
+        );
+        svg.appendChild(line2);
+
+        // Vertical line to first module of next row
+        const line3 = drawArrow(
+          nextX,
+          midY,
+          nextX,
+          nextY + nodeHeight / 2
+        );
+        svg.appendChild(line3);
+      }
+    });
   });
 
   container.appendChild(svg);
@@ -286,7 +344,7 @@ function makeMarker(svg) {
   return defs;
 }
 
-function drawArrow(x1, y1, x2, y2) {
+function drawArrow(x1, y1, x2, y2, noArrowhead = false) {
   const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   line.setAttribute('x1', x1.toString());
   line.setAttribute('y1', y1.toString());
@@ -294,7 +352,9 @@ function drawArrow(x1, y1, x2, y2) {
   line.setAttribute('y2', y2.toString());
   line.setAttribute('stroke', 'var(--border-accent)');
   line.setAttribute('stroke-width', '2');
-  line.setAttribute('marker-end', 'url(#arrow)');
+  if (!noArrowhead) {
+    line.setAttribute('marker-end', 'url(#arrow)');
+  }
   line.setAttribute('opacity', '0.8');
   return line;
 }
