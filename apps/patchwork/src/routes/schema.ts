@@ -1,14 +1,13 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import type { Bindings, AuthUser, SynthSchema, ParsedSchema } from '../types';
+import type { Bindings, AuthUser, SynthSchema, ParsedSchema, ExtractionJobMessage } from '../types';
 import { requireAuth, optionalAuth } from '../lib/auth';
-import { extractSchemaFromText, extractSchemaFromPDF } from '../lib/gemini';
 
 type Variables = { user: AuthUser };
 
 export const schemaRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-// Extract schema from uploaded file
+// Start async extraction job - returns immediately with job ID
 schemaRoutes.post('/extract', requireAuth(), async (c) => {
   const user = c.get('user');
 
@@ -27,7 +26,7 @@ schemaRoutes.post('/extract', requireAuth(), async (c) => {
 
     fileData = await file.arrayBuffer();
     fileName = file.name;
-    mimeType = file.type;
+    mimeType = file.type || 'application/octet-stream';
   } else {
     // JSON body with base64 data
     const body = await c.req.json<{
@@ -45,11 +44,19 @@ schemaRoutes.post('/extract', requireAuth(), async (c) => {
     mimeType = body.mime_type || 'application/octet-stream';
   }
 
-  // Store original file to R2
+  // Create job record
+  const jobId = nanoid();
   const uploadId = nanoid();
   const ext = fileName.split('.').pop() || 'bin';
   const r2Key = `uploads/${user.id}/${uploadId}.${ext}`;
+  const now = Math.floor(Date.now() / 1000);
 
+  await c.env.DB.prepare(
+    `INSERT INTO extraction_jobs (id, user_id, status, file_name, file_r2_key, created_at, updated_at)
+     VALUES (?, ?, 'uploading', ?, ?, ?, ?)`
+  ).bind(jobId, user.id, fileName, r2Key, now, now).run();
+
+  // Store file to R2
   await c.env.ASSETS.put(r2Key, fileData, {
     customMetadata: {
       originalName: fileName,
@@ -58,53 +65,83 @@ schemaRoutes.post('/extract', requireAuth(), async (c) => {
     }
   });
 
-  // Extract schema using Gemini
-  let schema: ParsedSchema;
-  try {
-    if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(fileData)));
-      schema = await extractSchemaFromPDF(base64, c.env.GEMINI_API_KEY);
-    } else {
-      // Assume text file
-      const text = new TextDecoder().decode(fileData);
-      schema = await extractSchemaFromText(text, c.env.GEMINI_API_KEY);
-    }
-  } catch (err) {
-    return c.json({
-      error: 'Schema extraction failed',
-      details: err instanceof Error ? err.message : String(err)
-    }, 500);
+  // Update status to processing and send to queue
+  await c.env.DB.prepare(
+    `UPDATE extraction_jobs SET status = 'processing', updated_at = ? WHERE id = ?`
+  ).bind(Math.floor(Date.now() / 1000), jobId).run();
+
+  // Send to queue for processing
+  const queueMessage: ExtractionJobMessage = {
+    jobId,
+    userId: user.id,
+    fileName,
+    mimeType,
+    r2Key
+  };
+
+  await c.env.EXTRACTION_QUEUE.send(queueMessage);
+  console.log(`[Extract] Job ${jobId} queued for processing`);
+
+  // Return immediately with job ID
+  return c.json({
+    job_id: jobId,
+    status: 'processing',
+    message: 'Extraction started. Poll /api/schema/job/:id for status.'
+  }, 202);
+})
+
+// Poll job status
+schemaRoutes.get('/job/:id', requireAuth(), async (c) => {
+  const jobId = c.req.param('id');
+  const user = c.get('user');
+
+  const job = await c.env.DB.prepare(
+    `SELECT * FROM extraction_jobs WHERE id = ? AND user_id = ?`
+  ).bind(jobId, user.id).first<{
+    id: string;
+    status: string;
+    file_name: string;
+    schema_id: string | null;
+    error_message: string | null;
+    created_at: number;
+    updated_at: number;
+  }>();
+
+  if (!job) {
+    return c.json({ error: 'Job not found' }, 404);
   }
 
-  // Store schema in D1
-  const schemaId = nanoid();
-  const now = Math.floor(Date.now() / 1000);
+  // If completed, include the schema data
+  if (job.status === 'completed' && job.schema_id) {
+    const schema = await c.env.DB.prepare(
+      `SELECT * FROM synth_schemas WHERE id = ?`
+    ).bind(job.schema_id).first<SynthSchema>();
 
-  await c.env.DB.prepare(
-    `INSERT INTO synth_schemas
-     (id, user_id, manufacturer, synth_name, schema_json, source_file_r2_key, extraction_model, is_public, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    schemaId,
-    user.id,
-    schema.manufacturer,
-    schema.synth_name,
-    JSON.stringify(schema),
-    r2Key,
-    'gemini-1.5-flash',
-    1,  // Public by default
-    now,
-    now
-  ).run();
+    if (schema) {
+      const parsed = JSON.parse(schema.schema_json) as ParsedSchema;
+      return c.json({
+        job_id: job.id,
+        status: job.status,
+        schema: {
+          id: schema.id,
+          manufacturer: schema.manufacturer,
+          synth_name: schema.synth_name,
+          parameter_count: parsed.parameters?.length || 0,
+          categories: parsed.categories,
+          schema: parsed
+        }
+      });
+    }
+  }
 
   return c.json({
-    id: schemaId,
-    manufacturer: schema.manufacturer,
-    synth_name: schema.synth_name,
-    parameter_count: schema.parameters.length,
-    categories: schema.categories,
-    schema
-  }, 201);
+    job_id: job.id,
+    status: job.status,
+    file_name: job.file_name,
+    error: job.error_message,
+    created_at: job.created_at,
+    updated_at: job.updated_at
+  });
 });
 
 // Get user's schemas
@@ -126,6 +163,11 @@ schemaRoutes.get('/mine', requireAuth(), async (c) => {
 schemaRoutes.get('/:id', optionalAuth(), async (c) => {
   const schemaId = c.req.param('id');
   const user = c.get('user');
+
+  // Don't match 'job' or 'mine' as IDs
+  if (schemaId === 'job' || schemaId === 'mine') {
+    return c.notFound();
+  }
 
   const schema = await c.env.DB.prepare(
     `SELECT * FROM synth_schemas WHERE id = ?`

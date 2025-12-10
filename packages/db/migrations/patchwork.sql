@@ -81,3 +81,20 @@ SELECT
 FROM ratings
 WHERE target_type = 'patch'
 GROUP BY target_id;
+
+-- Extraction jobs table for async processing
+CREATE TABLE IF NOT EXISTS extraction_jobs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'uploading', 'processing', 'completed', 'failed')),
+  file_name TEXT NOT NULL,
+  file_r2_key TEXT,
+  gemini_file_uri TEXT,
+  schema_id TEXT REFERENCES synth_schemas(id),
+  error_message TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_user ON extraction_jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON extraction_jobs(status);

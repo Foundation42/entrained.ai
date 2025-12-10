@@ -1,9 +1,18 @@
 export interface Bindings {
   DB: D1Database;
   ASSETS: R2Bucket;
+  EXTRACTION_QUEUE: Queue<ExtractionJobMessage>;
   JWT_SECRET: string;
   GEMINI_API_KEY: string;
   AUTH_DOMAIN: string;
+}
+
+export interface ExtractionJobMessage {
+  jobId: string;
+  userId: string;
+  fileName: string;
+  mimeType: string;
+  r2Key: string;
 }
 
 export interface AuthUser {

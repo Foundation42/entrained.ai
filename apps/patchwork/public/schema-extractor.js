@@ -1,80 +1,118 @@
-// Schema Extractor client-side logic
+// Schema Extractor client logic for the new UI
 const API_BASE = '/api/schema';
 
 let selectedFile = null;
 let extractedSchema = null;
+let currentJobId = null;
+let pollInterval = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-  checkAuth();
-  setupDropZone();
-  loadMySchemas();
-});
-
-function checkAuth() {
-  const token = localStorage.getItem('auth_token');
+function setAuthVisibility(isLoggedIn) {
   const authGate = document.getElementById('auth-gate');
   const extractorUI = document.getElementById('extractor-ui');
 
-  if (token) {
-    authGate.classList.add('hidden');
-    extractorUI.classList.remove('hidden');
+  if (isLoggedIn) {
+    authGate?.classList.add('hidden');
+    extractorUI?.classList.remove('hidden');
   } else {
-    authGate.classList.remove('hidden');
-    extractorUI.classList.add('hidden');
+    authGate?.classList.remove('hidden');
+    extractorUI?.classList.add('hidden');
   }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Small delay to allow auth.js to initialize
+  setTimeout(checkAuth, 50);
+  setupDropZone();
+  setupTabs();
+
+  // Listen for auth changes from other tabs
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'auth_token') {
+      checkAuth();
+    }
+  });
+});
+
+// Expose for auth.js callbacks / inline handlers
+window.recheckSchemaAuth = checkAuth;
+window.startExtraction = startExtraction;
+window.clearFile = clearFile;
+window.saveSchema = saveSchema;
+window.resetExtractor = resetExtractor;
+window.showSchemaTab = showSchemaTab;
+
+function checkAuth() {
+  const token = localStorage.getItem('auth_token');
+  setAuthVisibility(Boolean(token));
+  if (token) loadMySchemas();
 }
 
 function setupDropZone() {
   const dropZone = document.getElementById('drop-zone');
   const fileInput = document.getElementById('file-input');
 
-  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(event => {
-    dropZone.addEventListener(event, e => {
-      e.preventDefault();
-      e.stopPropagation();
-    });
+  if (!dropZone || !fileInput) return;
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
   });
 
-  ['dragenter', 'dragover'].forEach(event => {
-    dropZone.addEventListener(event, () => dropZone.classList.add('drag-over'));
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
   });
 
-  ['dragleave', 'drop'].forEach(event => {
-    dropZone.addEventListener(event, () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const files = e.dataTransfer?.files;
+    if (files?.length) {
+      handleFile(files[0]);
+    }
   });
 
-  dropZone.addEventListener('drop', e => {
-    const files = e.dataTransfer.files;
-    if (files.length) handleFile(files[0]);
-  });
-
-  fileInput.addEventListener('change', e => {
-    if (e.target.files.length) handleFile(e.target.files[0]);
+  fileInput.addEventListener('change', (e) => {
+    const files = e.target.files;
+    if (files?.length) {
+      handleFile(files[0]);
+    }
   });
 }
 
-function handleFile(file) {
-  // Validate file type
-  const validTypes = ['application/pdf', 'text/plain', 'text/markdown'];
-  const validExtensions = ['.pdf', '.txt', '.md'];
-  const ext = '.' + file.name.split('.').pop().toLowerCase();
+function setupTabs() {
+  document.querySelectorAll('.schema-tab').forEach((btn) => {
+    if (!btn.dataset.tab) {
+      btn.dataset.tab = btn.textContent?.toLowerCase().includes('json') ? 'json' : 'categories';
+    }
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      if (tab) {
+        showSchemaTab(tab);
+      }
+    });
+  });
+}
 
-  if (!validTypes.includes(file.type) && !validExtensions.includes(ext)) {
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function handleFile(file) {
+  const validTypes = ['application/pdf', 'text/plain', 'text/markdown'];
+  const validExts = ['.pdf', '.txt', '.md'];
+
+  const hasValidType = validTypes.includes(file.type);
+  const hasValidExt = validExts.some(ext => file.name.toLowerCase().endsWith(ext));
+
+  if (!hasValidType && !hasValidExt) {
     alert('Please upload a PDF or text file');
     return;
   }
 
-  // Validate size (20MB max)
-  if (file.size > 20 * 1024 * 1024) {
-    alert('File too large. Maximum size is 20MB.');
-    return;
-  }
-
   selectedFile = file;
-  showFilePreview(file);
-}
 
-function showFilePreview(file) {
   const dropZone = document.getElementById('drop-zone');
   const preview = document.getElementById('file-preview');
   const extractBtn = document.getElementById('extract-btn');
@@ -85,14 +123,27 @@ function showFilePreview(file) {
   dropZone.classList.add('hidden');
   preview.classList.remove('hidden');
   extractBtn.classList.remove('hidden');
+  extractBtn.disabled = false;
 }
 
 function clearFile() {
   selectedFile = null;
-  document.getElementById('file-input').value = '';
-  document.getElementById('drop-zone').classList.remove('hidden');
-  document.getElementById('file-preview').classList.add('hidden');
-  document.getElementById('extract-btn').classList.add('hidden');
+  currentJobId = null;
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+
+  const fileInput = document.getElementById('file-input');
+  if (fileInput) fileInput.value = '';
+
+  document.getElementById('drop-zone')?.classList.remove('hidden');
+  document.getElementById('file-preview')?.classList.add('hidden');
+  const extractBtn = document.getElementById('extract-btn');
+  if (extractBtn) {
+    extractBtn.classList.add('hidden');
+    extractBtn.disabled = false;
+  }
 }
 
 async function startExtraction() {
@@ -104,9 +155,14 @@ async function startExtraction() {
     return;
   }
 
-  // Show processing state
-  document.getElementById('step-upload').classList.add('hidden');
-  document.getElementById('step-processing').classList.remove('hidden');
+  const extractBtn = document.getElementById('extract-btn');
+  if (extractBtn?.disabled) return;
+  if (extractBtn) extractBtn.disabled = true;
+
+  document.getElementById('step-upload')?.classList.add('hidden');
+  document.getElementById('step-result')?.classList.add('hidden');
+  document.getElementById('step-processing')?.classList.remove('hidden');
+  updateProcessingStatus('Uploading file...');
 
   try {
     const formData = new FormData();
@@ -114,109 +170,162 @@ async function startExtraction() {
 
     const res = await fetch(`${API_BASE}/extract`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
+      headers: { 'Authorization': `Bearer ${token}` },
       body: formData
     });
 
     const data = await res.json();
 
     if (!res.ok) {
-      throw new Error(data.error || data.details || 'Extraction failed');
+      throw new Error(data.error || data.details || 'Upload failed');
     }
 
-    extractedSchema = data;
-    showResult(data);
-    loadMySchemas(); // Refresh list
-
+    currentJobId = data.job_id;
+    updateProcessingStatus('Processing with AI... This may take a minute or two.');
+    startPolling();
   } catch (err) {
-    alert('Extraction failed: ' + err.message);
-    resetExtractor();
+    showError(err instanceof Error ? err.message : String(err));
   }
 }
 
+function updateProcessingStatus(message) {
+  const statusEl = document.getElementById('processing-status');
+  if (statusEl) {
+    statusEl.textContent = message;
+  }
+}
+
+function startPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+  }
+
+  pollInterval = setInterval(checkJobStatus, 2000);
+  checkJobStatus();
+}
+
+async function checkJobStatus() {
+  if (!currentJobId) return;
+
+  const token = localStorage.getItem('auth_token');
+  if (!token) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/job/${currentJobId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to check job status');
+    }
+
+    switch (data.status) {
+      case 'uploading':
+        updateProcessingStatus('Uploading to AI service...');
+        break;
+      case 'processing':
+        updateProcessingStatus('AI is extracting parameters... This may take a minute or two.');
+        break;
+      case 'completed':
+        clearInterval(pollInterval);
+        pollInterval = null;
+        extractedSchema = data.schema;
+        showResult(data.schema);
+        loadMySchemas();
+        break;
+      case 'failed':
+        clearInterval(pollInterval);
+        pollInterval = null;
+        throw new Error(data.error || 'Extraction failed');
+      default:
+        updateProcessingStatus(`Status: ${data.status}`);
+    }
+  } catch (err) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+    showError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+function showError(message) {
+  document.getElementById('step-processing')?.classList.add('hidden');
+  document.getElementById('step-upload')?.classList.remove('hidden');
+  const extractBtn = document.getElementById('extract-btn');
+  if (extractBtn) extractBtn.disabled = false;
+  alert(`Extraction failed: ${message}`);
+}
+
 function showResult(data) {
-  document.getElementById('step-processing').classList.add('hidden');
-  document.getElementById('step-result').classList.remove('hidden');
+  document.getElementById('step-processing')?.classList.add('hidden');
+  document.getElementById('step-upload')?.classList.add('hidden');
+  document.getElementById('step-result')?.classList.remove('hidden');
+  setAuthVisibility(true);
 
-  document.getElementById('result-synth-name').textContent = data.synth_name;
-  document.getElementById('result-manufacturer').textContent = data.manufacturer;
-  document.getElementById('result-param-count').textContent = data.parameter_count;
-  document.getElementById('result-category-count').textContent = data.categories.length;
+  const parsed = data?.schema || data;
+  const params = parsed?.parameters || [];
+  const categories = new Set(params.map((p) => p.category || 'Uncategorized'));
 
-  // Render categories view
-  renderCategoriesView(data.schema);
+  document.getElementById('result-synth-name').textContent = data?.synth_name || parsed?.synth_name || 'Unknown synth';
+  document.getElementById('result-manufacturer').textContent = data?.manufacturer || parsed?.manufacturer || '';
+  document.getElementById('result-param-count').textContent = (data?.parameter_count ?? params.length ?? 0).toString();
+  document.getElementById('result-category-count').textContent = categories.size.toString();
 
-  // Render JSON view
-  document.getElementById('schema-json-content').textContent =
-    JSON.stringify(data.schema, null, 2);
+  renderCategoriesView(parsed);
+  const jsonEl = document.getElementById('schema-json-content');
+  if (jsonEl) {
+    jsonEl.textContent = JSON.stringify(parsed, null, 2);
+  }
+
+  showSchemaTab('categories');
 }
 
 function renderCategoriesView(schema) {
   const container = document.getElementById('schema-categories');
+  if (!container || !schema) return;
+
   const byCategory = {};
+  for (const param of schema.parameters || []) {
+    const cat = param.category || 'Uncategorized';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(param);
+  }
 
-  schema.parameters.forEach(param => {
-    if (!byCategory[param.category]) {
-      byCategory[param.category] = [];
-    }
-    byCategory[param.category].push(param);
-  });
-
-  container.innerHTML = Object.entries(byCategory).map(([category, params]) => `
+  const html = Object.entries(byCategory).map(([category, params]) => `
     <div class="category-section">
-      <h4 class="category-name">${escapeHtml(category)} <span class="category-count">(${params.length})</span></h4>
+      <div class="category-header">
+        <h4 class="category-name">${category}</h4>
+        <span class="param-count">${params.length} params</span>
+      </div>
       <div class="params-grid">
-        ${params.map(p => `
+        ${params.map((p) => `
           <div class="param-card">
-            <div class="param-name">${escapeHtml(p.name)}</div>
-            <div class="param-type">${p.type}</div>
-            ${p.min !== null && p.max !== null ? `
-              <div class="param-range">${p.min} – ${p.max}</div>
-            ` : ''}
-            ${p.values ? `
-              <div class="param-values">${p.values.slice(0, 3).join(', ')}${p.values.length > 3 ? '...' : ''}</div>
-            ` : ''}
-            ${p.cc ? `<div class="param-cc">CC ${p.cc}</div>` : ''}
+            <div class="param-top">
+              <div class="param-name">${p.name || 'Unnamed'}</div>
+              ${p.type ? `<div class="param-type">${p.type}</div>` : ''}
+            </div>
+            ${p.description ? `<div class="param-desc">${p.description}</div>` : ''}
+            <div class="param-meta">
+              ${p.min !== undefined && p.max !== undefined ? `<span class="param-range">${p.min} – ${p.max}</span>` : ''}
+              ${p.cc ? `<span class="param-chip">CC ${p.cc}</span>` : ''}
+              ${p.nrpn ? `<span class="param-chip">NRPN ${p.nrpn}</span>` : ''}
+            </div>
           </div>
         `).join('')}
       </div>
     </div>
   `).join('');
-}
 
-function showSchemaTab(tab) {
-  document.querySelectorAll('.schema-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.schema-content').forEach(c => c.classList.add('hidden'));
-
-  document.querySelector(`.schema-tab[onclick*="${tab}"]`).classList.add('active');
-  document.getElementById(`schema-${tab}`).classList.remove('hidden');
-}
-
-function saveSchema() {
-  // Schema is already saved during extraction, just show success
-  alert('Schema saved successfully!');
-  resetExtractor();
-}
-
-function resetExtractor() {
-  selectedFile = null;
-  extractedSchema = null;
-
-  document.getElementById('file-input').value = '';
-  document.getElementById('step-upload').classList.remove('hidden');
-  document.getElementById('step-processing').classList.add('hidden');
-  document.getElementById('step-result').classList.add('hidden');
-
-  document.getElementById('drop-zone').classList.remove('hidden');
-  document.getElementById('file-preview').classList.add('hidden');
-  document.getElementById('extract-btn').classList.add('hidden');
+  container.innerHTML = html || '<p class="schemas-empty">No parameters found.</p>';
 }
 
 async function loadMySchemas() {
   const token = localStorage.getItem('auth_token');
   if (!token) return;
+
+  const container = document.getElementById('schemas-list');
+  if (!container) return;
 
   try {
     const res = await fetch(`${API_BASE}/mine`, {
@@ -226,55 +335,65 @@ async function loadMySchemas() {
     if (!res.ok) return;
 
     const schemas = await res.json();
-    renderMySchemas(schemas);
 
+    if (!schemas.length) {
+      container.innerHTML = '<p class="schemas-empty">No schemas yet. Upload a manual to get started!</p>';
+      setAuthVisibility(true);
+      return;
+    }
+
+    container.innerHTML = schemas.map((s) => `
+      <div class="schema-card" data-id="${s.id}">
+        <div class="schema-info">
+          <span class="schema-manufacturer">${s.manufacturer}</span>
+          <span class="schema-name">${s.synth_name}</span>
+        </div>
+        <div class="schema-meta">
+          <span class="schema-patches">${s.patch_count || 0} patches</span>
+          <span class="schema-visibility">${s.is_public ? 'Public' : 'Private'}</span>
+        </div>
+      </div>
+    `).join('');
+    setAuthVisibility(true);
   } catch (err) {
     console.error('Failed to load schemas:', err);
   }
 }
 
-function renderMySchemas(schemas) {
-  const container = document.getElementById('schemas-list');
+function showSchemaTab(tab) {
+  document.querySelectorAll('.schema-tab').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
 
-  if (!schemas.length) {
-    container.innerHTML = '<p class="schemas-empty">No schemas yet. Upload a manual to get started!</p>';
+  document.querySelectorAll('.schema-content').forEach((content) => {
+    content.classList.toggle('hidden', content.id !== `schema-${tab}`);
+  });
+}
+
+function resetExtractor() {
+  clearFile();
+  extractedSchema = null;
+  document.getElementById('step-result')?.classList.add('hidden');
+  document.getElementById('step-processing')?.classList.add('hidden');
+  document.getElementById('step-upload')?.classList.remove('hidden');
+  showSchemaTab('categories');
+}
+
+function saveSchema() {
+  if (!extractedSchema) {
+    alert('No schema to save yet.');
     return;
   }
 
-  container.innerHTML = schemas.map(s => `
-    <a href="/schema/${s.id}" class="schema-card">
-      <div class="schema-info">
-        <span class="schema-name">${escapeHtml(s.synth_name)}</span>
-        <span class="schema-manufacturer">${escapeHtml(s.manufacturer)}</span>
-      </div>
-      <div class="schema-meta">
-        <span class="schema-patches">${s.patch_count || 0} patches</span>
-        <span class="schema-date">${formatDate(s.created_at)}</span>
-      </div>
-    </a>
-  `).join('');
+  const parsed = extractedSchema.schema || extractedSchema;
+  const blob = new Blob([JSON.stringify(parsed, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const fileName = `${parsed.manufacturer || 'synth'}-${parsed.synth_name || 'schema'}.json`.replace(/\s+/g, '-');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
-
-// Utilities
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
-
-function formatDate(timestamp) {
-  return new Date(timestamp * 1000).toLocaleDateString();
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-// Make functions available globally
-window.clearFile = clearFile;
-window.startExtraction = startExtraction;
-window.showSchemaTab = showSchemaTab;
-window.saveSchema = saveSchema;
-window.resetExtractor = resetExtractor;

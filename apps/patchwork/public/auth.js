@@ -115,6 +115,10 @@ async function handleLogin(event) {
       localStorage.setItem('auth_token', data.token);
       showLoggedInState(data.user);
       hideAuthModal();
+      // Notify other components about auth state change
+      if (typeof window.recheckSchemaAuth === 'function') {
+        window.recheckSchemaAuth();
+      }
     } else {
       errorEl.textContent = data.error || 'Login failed';
     }
@@ -162,6 +166,10 @@ async function handleRegister(event) {
         localStorage.setItem('auth_token', loginData.token);
         showLoggedInState(loginData.user);
         hideAuthModal();
+        // Notify other components about auth state change
+        if (typeof window.recheckSchemaAuth === 'function') {
+          window.recheckSchemaAuth();
+        }
       } else {
         // Registration succeeded but auto-login failed
         switchTab('login');
@@ -192,6 +200,9 @@ async function handleLogout() {
 
   localStorage.removeItem('auth_token');
   showLoggedOutState();
+  if (typeof window.recheckSchemaAuth === 'function') {
+    window.recheckSchemaAuth();
+  }
 }
 
 // Utility

@@ -65,8 +65,8 @@ export function schemaExtractorPage(): string {
         <div id="step-processing" class="extractor-step hidden">
           <div class="processing-indicator">
             <div class="spinner"></div>
-            <p>Analyzing document with Gemini...</p>
-            <p class="processing-hint">This may take 30-60 seconds for large manuals</p>
+            <p id="processing-status">Uploading file...</p>
+            <p class="processing-hint">Large manuals may take 1-2 minutes to process</p>
           </div>
         </div>
 
