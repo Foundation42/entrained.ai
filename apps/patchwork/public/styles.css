@@ -937,18 +937,24 @@ main {
 
 /* Synths layout */
 .synths-layout {
-  display: grid;
-  grid-template-columns: 360px 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 1.5rem;
 }
 
-.synths-list-panel,
-.synths-detail-panel {
+.synths-list-panel {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 1.25rem;
   box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+}
+
+.synths-detail-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
 }
 
 .panel-header {
@@ -1013,7 +1019,7 @@ main {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 1rem;
-  min-height: 260px;
+  min-height: 340px;
 }
 
 .flow-svg {
@@ -1034,10 +1040,6 @@ main {
 }
 
 @media (max-width: 1024px) {
-  .synths-layout {
-    grid-template-columns: 1fr;
-  }
-
   .detail-header {
     flex-direction: column;
     align-items: flex-start;

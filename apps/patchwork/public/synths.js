@@ -185,14 +185,15 @@ function renderFlowDiagram(schema) {
     return;
   }
 
-  const width = Math.max(220 * sections.length, 600);
-  const height = 240;
+  const available = container.clientWidth ? container.clientWidth - 24 : 800;
+  const width = Math.max(260 * sections.length, Math.max(available, 700));
+  const height = 360;
   const svg = createSvg(width, height);
 
-  const nodeWidth = 160;
-  const nodeHeight = 90;
-  const gap = 40;
-  const startX = 40;
+  const nodeWidth = 200;
+  const nodeHeight = 110;
+  const gap = 70;
+  const startX = 30;
   const y = height / 2 - nodeHeight / 2;
 
   // Arrows first
