@@ -1,0 +1,22 @@
+name = "patchwork"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+routes = [
+  { pattern = "patchwork.entrained.ai", custom_domain = true }
+]
+
+[assets]
+directory = "./public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "patchwork"
+database_id = "b23ab157-c28f-40eb-919a-8011c1f2de98"
+
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "patchwork-assets"
+
+[vars]
+AUTH_DOMAIN = "https://auth.entrained.ai"

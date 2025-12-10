@@ -1,0 +1,6 @@
+{
+  "name": "@entrained/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Database migrations for Entrained.ai platform"
+}

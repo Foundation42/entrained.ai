@@ -1,0 +1,15 @@
+name = "entrained-auth"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+routes = [
+  { pattern = "auth.entrained.ai", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "entrained-auth"
+database_id = "4c99f50e-da39-41b9-9b49-56c3049dd697"
+
+[vars]
+CORS_ORIGINS = "https://entrained.ai,https://patchwork.entrained.ai"

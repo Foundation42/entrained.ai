@@ -1,0 +1,25 @@
+{
+  "name": "entrained",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Entrained.ai platform monorepo",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:patchwork": "npm run dev -w apps/patchwork",
+    "dev:auth": "npm run dev -w apps/auth",
+    "deploy:patchwork": "npm run deploy -w apps/patchwork",
+    "deploy:auth": "npm run deploy -w apps/auth",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:migrate:auth": "wrangler d1 execute entrained-auth --file=packages/db/migrations/auth.sql",
+    "db:migrate:patchwork": "wrangler d1 execute patchwork --file=packages/db/migrations/patchwork.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^3.93.0"
+  }
+}
