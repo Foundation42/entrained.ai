@@ -22,6 +22,7 @@ export function layout(options: LayoutOptions, content: string): string {
       <span class="logo-text">Patchwork</span>
     </a>
     <div class="nav-links">
+      <a href="/schema-extractor">Schema Extractor</a>
       <a href="/patch-designer">Patch Designer</a>
       <a href="/sequencer">Sequencer</a>
     </div>

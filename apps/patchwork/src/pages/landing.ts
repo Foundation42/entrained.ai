@@ -19,6 +19,23 @@ export function landingPage(): string {
     </section>
 
     <section class="tools-grid">
+      <a href="/schema-extractor" class="tool-card">
+        <div class="tool-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <path d="M14 2v6h6"/>
+            <path d="M16 13H8"/>
+            <path d="M16 17H8"/>
+            <path d="M10 9H8"/>
+          </svg>
+        </div>
+        <h2 class="tool-title">Schema Extractor</h2>
+        <p class="tool-description">
+          Upload a synth manual and extract a structured parameter schema using AI.
+        </p>
+        <span class="tool-status">Live</span>
+      </a>
+
       <a href="/patch-designer" class="tool-card">
         <div class="tool-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
