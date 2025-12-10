@@ -119,6 +119,9 @@ async function handleLogin(event) {
       if (typeof window.recheckSchemaAuth === 'function') {
         window.recheckSchemaAuth();
       }
+      if (typeof window.recheckSynthAuth === 'function') {
+        window.recheckSynthAuth();
+      }
     } else {
       errorEl.textContent = data.error || 'Login failed';
     }
@@ -170,6 +173,9 @@ async function handleRegister(event) {
         if (typeof window.recheckSchemaAuth === 'function') {
           window.recheckSchemaAuth();
         }
+        if (typeof window.recheckSynthAuth === 'function') {
+          window.recheckSynthAuth();
+        }
       } else {
         // Registration succeeded but auto-login failed
         switchTab('login');
@@ -202,6 +208,9 @@ async function handleLogout() {
   showLoggedOutState();
   if (typeof window.recheckSchemaAuth === 'function') {
     window.recheckSchemaAuth();
+  }
+  if (typeof window.recheckSynthAuth === 'function') {
+    window.recheckSynthAuth();
   }
 }
 

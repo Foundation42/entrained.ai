@@ -23,6 +23,7 @@ export function layout(options: LayoutOptions, content: string): string {
     </a>
     <div class="nav-links">
       <a href="/schema-extractor">Schema Extractor</a>
+      <a href="/synths">My Synths</a>
       <a href="/patch-designer">Patch Designer</a>
       <a href="/sequencer">Sequencer</a>
     </div>

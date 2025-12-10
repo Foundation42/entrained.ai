@@ -6,6 +6,7 @@ import { landingPage } from './pages/landing';
 import { patchDesignerPage } from './pages/patch-designer';
 import { sequencerPage } from './pages/sequencer';
 import { schemaExtractorPage } from './pages/schema-extractor';
+import { synthsPage } from './pages/synths';
 import { schemaRoutes } from './routes/schema';
 import { extractSchemaFromText, extractSchemaFromPDF } from './lib/gemini';
 
@@ -28,6 +29,7 @@ app.get('/', (c) => c.html(landingPage()));
 app.get('/patch-designer', (c) => c.html(patchDesignerPage()));
 app.get('/sequencer', (c) => c.html(sequencerPage()));
 app.get('/schema-extractor', (c) => c.html(schemaExtractorPage()));
+app.get('/synths', (c) => c.html(synthsPage()));
 
 // Queue consumer for extraction jobs
 async function handleExtractionJob(
