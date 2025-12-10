@@ -34,6 +34,29 @@ export interface SynthParameter {
   nrpn?: number;      // NRPN if applicable
 }
 
+export interface SynthArchitectureModule {
+  id?: string;
+  label: string;
+  type?: string;
+  categories?: string[];
+  shapes?: string[];
+  modes?: string[];
+  notes?: string;
+  controls?: string[];
+}
+
+export interface SynthArchitecture {
+  signal_flow?: string[]; // ordered list of module labels/ids
+  modules?: SynthArchitectureModule[];
+  ui_layout?: {
+    sections?: string[];
+    knob_groups?: Array<{
+      title: string;
+      controls: string[];
+    }>;
+  };
+}
+
 export interface SynthSchema {
   id: string;
   user_id: string;
@@ -50,11 +73,16 @@ export interface SynthSchema {
 export interface ParsedSchema {
   manufacturer: string;
   synth_name: string;
+  description?: string;
+  synth_type?: string;
   version?: string;
+  voice_count?: number;
   parameters: SynthParameter[];
   categories: string[];
   midi_channel?: number;
   sysex_header?: number[];
+   // Optional richer metadata for visualization/layout
+  architecture?: SynthArchitecture;
 }
 
 export interface Patch {

@@ -94,8 +94,14 @@ function renderSchemaDetail(schema) {
   const parsed = schema.schema_json || schema.schema || schema;
   if (!parsed) return;
 
-  document.getElementById('detail-name').textContent = `${schema.manufacturer} ${schema.synth_name}`;
-  document.getElementById('detail-meta').textContent = `Created at ${formatDate(schema.created_at)} · ${schema.is_public ? 'Public' : 'Private'}`;
+  const headerName = `${schema.manufacturer} ${schema.synth_name}`;
+  document.getElementById('detail-name').textContent = headerName;
+  const descParts = [];
+  if (parsed.description) descParts.push(parsed.description);
+  if (parsed.version) descParts.push(`v${parsed.version}`);
+  if (schema.created_at) descParts.push(`Created ${formatDate(schema.created_at)}`);
+  descParts.push(schema.is_public ? 'Public' : 'Private');
+  document.getElementById('detail-meta').textContent = descParts.join(' · ');
 
   const params = parsed.parameters || [];
   const categories = new Set(params.map((p) => p.category || 'Uncategorized'));
@@ -185,15 +191,15 @@ function renderFlowDiagram(schema) {
     return;
   }
 
-  const available = container.clientWidth ? container.clientWidth - 24 : 800;
-  const width = Math.max(260 * sections.length, Math.max(available, 700));
-  const height = 360;
+  const available = container.clientWidth ? container.clientWidth - 24 : 900;
+  const width = Math.max(280 * sections.length, Math.max(available, 900));
+  const height = 420;
   const svg = createSvg(width, height);
 
-  const nodeWidth = 200;
-  const nodeHeight = 110;
-  const gap = 70;
-  const startX = 30;
+  const nodeWidth = 240;
+  const nodeHeight = 120;
+  const gap = 80;
+  const startX = 40;
   const y = height / 2 - nodeHeight / 2;
 
   // Arrows first
@@ -216,6 +222,22 @@ function renderFlowDiagram(schema) {
 
 function buildSections(schema) {
   const params = schema.parameters || [];
+  const archFlow = schema.architecture?.signal_flow;
+  const archModules = schema.architecture?.modules || [];
+
+  if (archFlow && archFlow.length) {
+    return archFlow.map((label) => {
+      const module = archModules.find((m) => (m.label || '').toLowerCase() === label.toLowerCase());
+      const categories = module?.categories || [label];
+      const count = params.filter((p) => categories.some((cat) => (p.category || '').includes(cat) || (p.name || '').includes(cat))).length;
+      return {
+        id: module?.id || label.toLowerCase().replace(/\s+/g, '-'),
+        label: module?.label || label,
+        count: count || (module?.controls?.length || 0) || 0,
+      };
+    });
+  }
+
   const sectionDefs = [
     { id: 'osc', label: 'Oscillators', categories: ['Oscillator', 'Oscillator 1', 'Oscillator 2', 'Oscillator 3'] },
     { id: 'mixer', label: 'Mixer', categories: ['Mixer'] },

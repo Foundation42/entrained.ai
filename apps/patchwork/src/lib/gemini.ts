@@ -6,7 +6,15 @@ const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
 const GEMINI_GENERATE_URL = `${GEMINI_API_BASE}/v1beta/models/${MODEL_NAME}:streamGenerateContent`;
 const GEMINI_UPLOAD_URL = `${GEMINI_API_BASE}/upload/v1beta/files`;
 
-const EXTRACTION_PROMPT = `You are a synthesizer parameter extraction expert. Analyze this synthesizer manual/documentation and extract a structured parameter schema.
+const EXTRACTION_PROMPT = `You are a synthesizer parameter extraction expert. Analyze this synthesizer manual/documentation and extract a structured parameter schema with metadata and architecture.
+
+Metadata to extract:
+- manufacturer (vendor)
+- synth_name (product/model)
+- description: short phrase e.g. "Paraphonic analog synth" or "Hybrid wavetable/analog mono synth"
+- synth_type: e.g. "monophonic", "paraphonic", "polyphonic", "drum machine", "module"
+- version: firmware/manual version if stated
+- voice_count: number of voices if stated
 
 For each parameter, identify:
 - name: The parameter name as shown on the synth
@@ -19,11 +27,20 @@ For each parameter, identify:
 - cc: MIDI CC number if documented
 - nrpn: NRPN number if documented
 
+Architecture / layout:
+- architecture.signal_flow: ordered list of major blocks in the signal path (e.g., ["Oscillator 1", "Oscillator 2", "Mixer", "Filter", "VCA", "FX"])
+- architecture.modules: list of modules with labels and optional details (type, categories, shapes, modes, controls)
+- architecture.ui_layout.sections: UI/grouping sections in the panel
+- architecture.ui_layout.knob_groups: group title + list of controls within it
+
 Return a JSON object with this exact structure:
 {
   "manufacturer": "string",
   "synth_name": "string",
+  "description": "string or null",
+  "synth_type": "string or null",
   "version": "string or null",
+  "voice_count": number or null,
   "parameters": [
     {
       "name": "string",
@@ -40,7 +57,31 @@ Return a JSON object with this exact structure:
   ],
   "categories": ["list of all unique categories"],
   "midi_channel": number or null,
-  "sysex_header": [numbers] or null
+  "sysex_header": [numbers] or null,
+  "architecture": {
+    "signal_flow": ["string"] or null,
+    "modules": [
+      {
+        "id": "string or null",
+        "label": "string",
+        "type": "string or null",
+        "categories": ["string"] or null,
+        "shapes": ["string"] or null,
+        "modes": ["string"] or null,
+        "notes": "string or null",
+        "controls": ["string"] or null
+      }
+    ],
+    "ui_layout": {
+      "sections": ["string"] or null,
+      "knob_groups": [
+        {
+          "title": "string",
+          "controls": ["string"]
+        }
+      ]
+    }
+  }
 }
 
 Focus on sound-shaping parameters. Skip utility parameters like MIDI settings unless they include CC mappings.
@@ -380,6 +421,17 @@ function validateSchema(schema: ParsedSchema): ParsedSchema {
   // Build categories list if not provided
   if (!schema.categories || !Array.isArray(schema.categories)) {
     schema.categories = [...new Set(schema.parameters.map(p => p.category))];
+  }
+
+  // Normalize optional fields
+  if (schema.description && typeof schema.description !== 'string') {
+    delete (schema as any).description;
+  }
+  if (schema.synth_type && typeof schema.synth_type !== 'string') {
+    delete (schema as any).synth_type;
+  }
+  if (schema.voice_count !== undefined && typeof schema.voice_count !== 'number') {
+    delete (schema as any).voice_count;
   }
 
   return schema;

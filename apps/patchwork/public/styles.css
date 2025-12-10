@@ -1019,7 +1019,8 @@ main {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 1rem;
-  min-height: 340px;
+  min-height: 420px;
+  overflow-x: auto;
 }
 
 .flow-svg {
