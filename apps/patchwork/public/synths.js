@@ -141,6 +141,58 @@ function showSchemaTab(tab) {
   });
 }
 
+function showModuleDetail(section) {
+  if (!currentSchema) return;
+  const parsed = currentSchema.schema_json || currentSchema.schema || currentSchema;
+  const params = parsed.parameters || [];
+
+  // Filter parameters that belong to this module's categories
+  const moduleParams = params.filter(p =>
+    section.categories && section.categories.some(cat =>
+      (p.category || '').toLowerCase().includes(cat.toLowerCase())
+    )
+  );
+
+  const container = document.getElementById('module-detail');
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="module-detail-header">
+      <div>
+        <h4>${section.label}</h4>
+        <p class="module-param-count">${moduleParams.length} parameter${moduleParams.length !== 1 ? 's' : ''}</p>
+      </div>
+      <button class="btn-close" onclick="closeModuleDetail()">×</button>
+    </div>
+    <div class="module-params">
+      ${moduleParams.map(p => `
+        <div class="param-card">
+          <div class="param-top">
+            <div class="param-name">${p.name || 'Unnamed'}</div>
+            ${p.type ? `<div class="param-type">${p.type}</div>` : ''}
+          </div>
+          ${p.description ? `<div class="param-desc">${p.description}</div>` : ''}
+          <div class="param-meta">
+            ${p.min !== undefined && p.max !== undefined ? `<span class="param-range">${p.min} – ${p.max}</span>` : ''}
+            ${p.cc ? `<span class="param-chip">CC ${p.cc}</span>` : ''}
+            ${p.nrpn ? `<span class="param-chip">NRPN ${p.nrpn}</span>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+
+  container.classList.remove('hidden');
+}
+
+window.closeModuleDetail = closeModuleDetail;
+function closeModuleDetail() {
+  const container = document.getElementById('module-detail');
+  if (container) {
+    container.classList.add('hidden');
+  }
+}
+
 function renderCategoriesView(schema) {
   const container = document.getElementById('schema-categories');
   if (!container) return;
@@ -238,7 +290,7 @@ function renderFlowDiagram(schema) {
       else if (rowIdx < rows.length - 1) {
         const nextRow = rows[rowIdx + 1];
         const nextY = y + nodeHeight + vGap;
-        const nextX = padding;
+        const nextCenterX = padding + nodeWidth / 2; // Connect to center of first module
 
         // Vertical line down
         const centerX = x + nodeWidth / 2;
@@ -253,11 +305,11 @@ function renderFlowDiagram(schema) {
         );
         svg.appendChild(line1);
 
-        // Horizontal line to start of next row
+        // Horizontal line to center of first module in next row
         const line2 = drawArrow(
           centerX,
           midY,
-          nextX,
+          nextCenterX,
           midY,
           true // no arrowhead on middle segment
         );
@@ -265,9 +317,9 @@ function renderFlowDiagram(schema) {
 
         // Vertical line to first module of next row
         const line3 = drawArrow(
-          nextX,
+          nextCenterX,
           midY,
-          nextX,
+          nextCenterX,
           nextY + nodeHeight / 2
         );
         svg.appendChild(line3);
@@ -292,6 +344,7 @@ function buildSections(schema) {
         id: module?.id || label.toLowerCase().replace(/\s+/g, '-'),
         label: module?.label || label,
         count: count || (module?.controls?.length || 0) || 0,
+        categories: categories  // Add categories so parameter filtering works
       };
     });
   }
@@ -338,7 +391,7 @@ function makeMarker(svg) {
   marker.setAttribute('orient', 'auto');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute('d', 'M0,0 L0,6 L6,3 z');
-  path.setAttribute('fill', 'currentColor');
+  path.setAttribute('fill', '#60a5fa'); // Match arrow stem color
   marker.appendChild(path);
   defs.appendChild(marker);
   return defs;
@@ -350,43 +403,68 @@ function drawArrow(x1, y1, x2, y2, noArrowhead = false) {
   line.setAttribute('y1', y1.toString());
   line.setAttribute('x2', x2.toString());
   line.setAttribute('y2', y2.toString());
-  line.setAttribute('stroke', 'var(--border-accent)');
-  line.setAttribute('stroke-width', '2');
+  line.setAttribute('stroke', '#60a5fa'); // Bright blue - more visible
+  line.setAttribute('stroke-width', '2.5'); // Slightly thicker
   if (!noArrowhead) {
     line.setAttribute('marker-end', 'url(#arrow)');
   }
-  line.setAttribute('opacity', '0.8');
+  line.setAttribute('opacity', '0.9');
   return line;
+}
+
+function getModuleColor(section) {
+  const label = section.label.toLowerCase();
+  const id = section.id.toLowerCase();
+
+  if (label.includes('osc') || id.includes('osc')) return '#4ade80'; // Green
+  if (label.includes('mixer') || id.includes('mixer')) return '#60a5fa'; // Light blue
+  if (label.includes('filter') || id.includes('filter')) return '#fbbf24'; // Yellow
+  if (label.includes('env') || label.includes('lfo') || id.includes('env') || id.includes('lfo')) return '#fb923c'; // Orange
+  if (label.includes('fx') || label.includes('effect') || label.includes('distortion') || id.includes('fx')) return '#c084fc'; // Purple
+  return '#94a3b8'; // Gray for control/other
 }
 
 function drawNode(section, x, y, width, height) {
   const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.setAttribute('class', 'node-clickable');
+  g.setAttribute('data-section', JSON.stringify(section));
+  g.style.cursor = 'pointer';
+  g.addEventListener('click', () => showModuleDetail(section));
+
   const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('class', 'node-rect');
   rect.setAttribute('x', x.toString());
   rect.setAttribute('y', y.toString());
   rect.setAttribute('rx', '10');
   rect.setAttribute('ry', '10');
   rect.setAttribute('width', width.toString());
   rect.setAttribute('height', height.toString());
-  rect.setAttribute('fill', 'var(--bg-card)');
-  rect.setAttribute('stroke', 'var(--border-accent)');
-  rect.setAttribute('stroke-width', '1.5');
+  rect.setAttribute('fill', getModuleColor(section));
+  rect.setAttribute('stroke', '#000');
+  rect.setAttribute('stroke-width', '2');
+  rect.setAttribute('opacity', '0.85');
   g.appendChild(rect);
 
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'text');
   title.textContent = section.label;
   title.setAttribute('x', (x + width / 2).toString());
-  title.setAttribute('y', (y + 34).toString());
+  title.setAttribute('y', (y + 42).toString()); // Adjusted for larger text
   title.setAttribute('text-anchor', 'middle');
   title.setAttribute('class', 'node-title');
+  title.setAttribute('fill', '#000');
+  title.setAttribute('font-weight', '700');
+  title.setAttribute('font-size', '20'); // Increased from 16px
   g.appendChild(title);
 
   const count = document.createElementNS('http://www.w3.org/2000/svg', 'text');
   count.textContent = `${section.count} params`;
   count.setAttribute('x', (x + width / 2).toString());
-  count.setAttribute('y', (y + 60).toString());
+  count.setAttribute('y', (y + 66).toString()); // Adjusted for larger text
   count.setAttribute('text-anchor', 'middle');
   count.setAttribute('class', 'node-count');
+  count.setAttribute('fill', '#000'); // Black for better visibility
+  count.setAttribute('font-size', '15'); // Slightly larger
+  count.setAttribute('font-weight', '600'); // Bolder
   g.appendChild(count);
 
   return g;

@@ -70,6 +70,7 @@ export function synthsPage(): string {
             <div id="flow-diagram" class="flow-diagram">
               <p class="schemas-empty">Select a synth to see its architecture.</p>
             </div>
+            <div id="module-detail" class="module-detail hidden"></div>
           </div>
           <div id="schema-list" class="schema-content hidden">
             <div id="schema-categories" class="schema-categories"></div>
