@@ -8,6 +8,7 @@ import { sequencerPage } from './pages/sequencer';
 import { schemaExtractorPage } from './pages/schema-extractor';
 import { synthsPage } from './pages/synths';
 import { schemaRoutes } from './routes/schema';
+import { patchRoutes } from './routes/patch';
 import { extractSchemaFromText, extractSchemaFromPDF } from './lib/gemini';
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -20,6 +21,7 @@ app.use('/api/*', cors({
 
 // API routes
 app.route('/api/schema', schemaRoutes);
+app.route('/api/patch', patchRoutes);
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
@@ -53,11 +55,11 @@ async function handleExtractionJob(
 
     if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
       console.log(`[Queue] Using Gemini File API for PDF...`);
-      schema = await extractSchemaFromPDF(fileData, fileName, env.GEMINI_API_KEY);
+      schema = await extractSchemaFromPDF(fileData, fileName, env.GEMINI_API_KEY, env.GEMINI_MODEL);
     } else {
       console.log(`[Queue] Processing as text file...`);
       const text = new TextDecoder().decode(fileData);
-      schema = await extractSchemaFromText(text, env.GEMINI_API_KEY);
+      schema = await extractSchemaFromText(text, env.GEMINI_API_KEY, env.GEMINI_MODEL);
     }
 
     console.log(`[Queue] Extraction complete: ${schema.manufacturer} ${schema.synth_name}`);
@@ -77,7 +79,7 @@ async function handleExtractionJob(
       schema.synth_name,
       JSON.stringify(schema),
       r2Key,
-      'gemini-3-pro-preview',
+      env.GEMINI_MODEL,
       1,
       now,
       now

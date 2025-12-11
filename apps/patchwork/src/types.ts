@@ -4,6 +4,7 @@ export interface Bindings {
   EXTRACTION_QUEUE: Queue<ExtractionJobMessage>;
   JWT_SECRET: string;
   GEMINI_API_KEY: string;
+  GEMINI_MODEL: string;
   AUTH_DOMAIN: string;
 }
 

@@ -1,10 +1,12 @@
 import type { ParsedSchema, SynthParameter } from '../types';
 
-const MODEL_NAME = 'gemini-3-pro-preview';
+const DEFAULT_MODEL = 'gemini-3-pro-preview';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
-// Use streamGenerateContent to keep the connection alive during long inference
-const GEMINI_GENERATE_URL = `${GEMINI_API_BASE}/v1beta/models/${MODEL_NAME}:streamGenerateContent`;
 const GEMINI_UPLOAD_URL = `${GEMINI_API_BASE}/upload/v1beta/files`;
+
+function getGenerateUrl(model: string): string {
+  return `${GEMINI_API_BASE}/v1beta/models/${model}:streamGenerateContent`;
+}
 
 const EXTRACTION_PROMPT = `You are a synthesizer parameter extraction expert. Analyze this synthesizer manual/documentation and extract a structured parameter schema with metadata and architecture.
 
@@ -92,9 +94,10 @@ Document content:
 
 export async function extractSchemaFromText(
   text: string,
-  apiKey: string
+  apiKey: string,
+  model: string = DEFAULT_MODEL
 ): Promise<ParsedSchema> {
-  const response = await fetch(`${GEMINI_GENERATE_URL}?key=${apiKey}`, {
+  const response = await fetch(`${getGenerateUrl(model)}?key=${apiKey}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -248,9 +251,10 @@ async function uploadToGeminiFileAPI(
 export async function extractSchemaFromPDF(
   pdfData: ArrayBuffer,
   fileName: string,
-  apiKey: string
+  apiKey: string,
+  model: string = DEFAULT_MODEL
 ): Promise<ParsedSchema> {
-  console.log(`[Gemini] Starting PDF extraction for ${fileName}`);
+  console.log(`[Gemini] Starting PDF extraction for ${fileName} using model ${model}`);
 
   // Step 1: Upload file via File API
   const fileUri = await uploadToGeminiFileAPI(pdfData, fileName, apiKey);
@@ -281,7 +285,7 @@ export async function extractSchemaFromPDF(
   };
 
   // Use alt=sse for server-sent events streaming
-  const response = await fetch(`${GEMINI_GENERATE_URL}?key=${apiKey}&alt=sse`, {
+  const response = await fetch(`${getGenerateUrl(model)}?key=${apiKey}&alt=sse`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -389,6 +393,282 @@ export async function extractSchemaFromPDF(
     return validateSchema(schema);
   } catch (e) {
     console.error(`[Gemini] JSON parse error. Content preview: ${content.substring(0, 500)}`);
+    throw new Error(`Failed to parse Gemini response as JSON: ${e}`);
+  }
+}
+
+// ========================================
+// PATCH GENERATION
+// ========================================
+
+export interface GeneratedPatchParameter {
+  cc?: number;
+  nrpn?: number;
+  name: string;
+  value: number | string;
+}
+
+export interface GeneratedPatch {
+  patch_name: string;
+  explanation: string;
+  parameters: GeneratedPatchParameter[];
+}
+
+// Slim schema for AI - only fields needed for patch generation
+interface SlimParameter {
+  name: string;
+  category: string;
+  type: string;
+  min?: number;
+  max?: number;
+  values?: string[];
+  cc?: number;
+  nrpn?: number;
+}
+
+function buildPatchDesignPrompt(
+  synthName: string,
+  synthDescription: string | undefined,
+  signalFlow: string[] | undefined,
+  slimParams: SlimParameter[]
+): string {
+  const flowText = signalFlow?.length
+    ? `Signal Flow: ${signalFlow.join(' -> ')}`
+    : '';
+
+  return `You are an expert Synthesizer Programmer and Sound Designer.
+Your goal is to configure a specific hardware synthesizer to match a user's abstract sound description.
+
+### 1. THE INSTRUMENT
+You are currently programming the: **${synthName}**
+${synthDescription ? `Description: ${synthDescription}` : ''}
+${flowText}
+
+### 2. THE PARAMETER SCHEMA (PHYSICS)
+You must **strictly** adhere to the following parameter definitions.
+This defines every knob, slider, and switch available to you.
+Do not hallucinate parameters that are not in this list.
+
+**Parameter List:**
+${JSON.stringify(slimParams)}
+
+*Format of Parameter List:*
+\`[{"name": "Osc 1 Octave", "category": "Oscillator 1", "min": -2, "max": 2, "type": "discrete", "cc": 66}, ...]\`
+
+### 3. GENERATION RULES
+1.  **Valid Ranges:** You must strictly respect the \`min\` and \`max\` values for every parameter.
+    * *Example:* If \`Osc 1 Octave\` is \`min: -2, max: 2\`, do NOT output \`64\` or \`127\`. Output \`1\` or \`-1\`.
+2.  **Discrete vs Continuous:**
+    * If \`type\` is "discrete", output whole integers only within the min/max range.
+    * If \`type\` is "continuous", output integers within the min/max range.
+    * If \`type\` is "switch", output 0 (off) or 1 (on).
+    * If \`type\` is "enum" and \`values\` is provided, output one of the listed string values.
+3.  **Signal Flow Awareness:**
+    * Use the \`category\` field to understand the synth structure.
+    * If the user wants "Grit," look for parameters in \`Distortion\`, \`Drive\`, or \`Feedback\` categories.
+    * If the user wants "Warmth," think about filter resonance, oscillator detune, and saturation.
+4.  **Sparse Output:** You do not need to list every parameter. Assume a sensible "Init Patch" state (Sawtooth wave, Open Filter, medium ADSR). Only list the values that *change* to create the requested sound.
+5.  **Creative Naming:** Give the patch a creative, evocative name that captures the essence of the sound.
+
+### 4. OUTPUT FORMAT
+Return valid, parseable JSON only. No markdown formatting, no code blocks.
+
+{
+  "patch_name": "Creative Name",
+  "explanation": "Brief explanation of sound design choices and why specific parameters were chosen.",
+  "parameters": [
+    {
+      "cc": 66,
+      "name": "Osc 1 Octave",
+      "value": 1
+    },
+    {
+      "cc": 33,
+      "name": "Filter Cutoff",
+      "value": 45
+    }
+  ]
+}`;
+}
+
+export async function generatePatch(
+  schema: ParsedSchema,
+  userPrompt: string,
+  apiKey: string,
+  model: string = DEFAULT_MODEL
+): Promise<GeneratedPatch> {
+  // Build slim schema - only fields the AI needs
+  const slimParams: SlimParameter[] = schema.parameters.map(p => ({
+    name: p.name,
+    category: p.category,
+    type: p.type,
+    min: p.min,
+    max: p.max,
+    values: p.values,
+    cc: p.cc,
+    nrpn: p.nrpn,
+  }));
+
+  const systemPrompt = buildPatchDesignPrompt(
+    `${schema.manufacturer} ${schema.synth_name}`,
+    schema.description,
+    schema.architecture?.signal_flow,
+    slimParams
+  );
+
+  const fullPrompt = `${systemPrompt}
+
+### USER REQUEST
+${userPrompt}`;
+
+  console.log(`[Gemini Patch] Generating patch for ${schema.synth_name} using model ${model}, prompt: "${userPrompt.substring(0, 50)}..."`);
+
+  // Use alt=sse for server-sent events streaming (same as PDF extraction)
+  const response = await fetch(`${getGenerateUrl(model)}?key=${apiKey}&alt=sse`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      contents: [{
+        parts: [{
+          text: fullPrompt
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.7, // Slightly creative
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json'
+      }
+    })
+  });
+
+  console.log(`[Gemini Patch] Response status: ${response.status}`);
+
+  if (!response.ok) {
+    const error = await response.text();
+    console.error(`[Gemini Patch] API error: ${response.status} - ${error}`);
+    throw new Error(`Gemini API error: ${response.status} - ${error}`);
+  }
+
+  // Handle streaming response
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('No response body');
+  }
+
+  let fullContent = '';
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let chunkCount = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    chunkCount++;
+    const chunk = buffer + decoder.decode(value, { stream: true });
+    const lines = chunk.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const jsonStr = line.slice(6);
+          if (jsonStr.trim() === '[DONE]') continue;
+
+          const data = JSON.parse(jsonStr) as {
+            candidates?: Array<{
+              content?: {
+                parts?: Array<{ text?: string }>;
+              };
+            }>;
+          };
+
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) {
+            fullContent += text;
+          }
+        } catch (parseErr) {
+          console.warn(`[Gemini Patch] Chunk parse error: ${parseErr}`);
+        }
+      }
+    }
+  }
+
+  console.log(`[Gemini Patch] Stream complete. Chunks: ${chunkCount}, content length: ${fullContent.length}`);
+
+  // Process remaining buffer
+  if (buffer.startsWith('data: ')) {
+    try {
+      const jsonStr = buffer.slice(6);
+      if (jsonStr.trim() !== '[DONE]') {
+        const data = JSON.parse(jsonStr) as {
+          candidates?: Array<{
+            content?: {
+              parts?: Array<{ text?: string }>;
+            };
+          }>;
+        };
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          fullContent += text;
+        }
+      }
+    } catch {
+      // Skip malformed final chunk
+    }
+  }
+
+  if (!fullContent) {
+    throw new Error('No content in Gemini response');
+  }
+
+  console.log(`[Gemini Patch] Got response (${fullContent.length} chars)`);
+
+  try {
+    const patch = JSON.parse(fullContent) as GeneratedPatch;
+
+    // Validate the response structure
+    if (!patch.patch_name || typeof patch.patch_name !== 'string') {
+      throw new Error('Missing or invalid patch_name');
+    }
+    if (!patch.explanation || typeof patch.explanation !== 'string') {
+      throw new Error('Missing or invalid explanation');
+    }
+    if (!Array.isArray(patch.parameters)) {
+      throw new Error('Missing or invalid parameters array');
+    }
+
+    // Validate each parameter against the schema
+    const schemaParamMap = new Map(schema.parameters.map(p => [p.name.toLowerCase(), p]));
+
+    for (const param of patch.parameters) {
+      const schemaParam = schemaParamMap.get(param.name.toLowerCase());
+      if (!schemaParam) {
+        console.warn(`[Gemini Patch] Parameter "${param.name}" not found in schema, skipping validation`);
+        continue;
+      }
+
+      // Validate range for numeric values
+      if (typeof param.value === 'number') {
+        if (schemaParam.min !== undefined && param.value < schemaParam.min) {
+          console.warn(`[Gemini Patch] Clamping ${param.name} from ${param.value} to min ${schemaParam.min}`);
+          param.value = schemaParam.min;
+        }
+        if (schemaParam.max !== undefined && param.value > schemaParam.max) {
+          console.warn(`[Gemini Patch] Clamping ${param.name} from ${param.value} to max ${schemaParam.max}`);
+          param.value = schemaParam.max;
+        }
+      }
+    }
+
+    console.log(`[Gemini Patch] Generated patch "${patch.patch_name}" with ${patch.parameters.length} parameters`);
+    return patch;
+  } catch (e) {
+    console.error(`[Gemini Patch] JSON parse error. Content: ${fullContent.substring(0, 500)}`);
     throw new Error(`Failed to parse Gemini response as JSON: ${e}`);
   }
 }
