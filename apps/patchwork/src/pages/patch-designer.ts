@@ -153,10 +153,19 @@ export function patchDesignerPage(): string {
         </div>
       </div>
 
-      <!-- Saved patches section -->
-      <div id="saved-patches-section" class="saved-patches-section hidden">
-        <h3>Your Saved Patches</h3>
-        <div id="saved-patches-list" class="saved-patches-list"></div>
+      <!-- Patch Library Section - shown on page load -->
+      <div id="patch-library-section" class="patch-library-section hidden">
+        <div class="library-header">
+          <h3>Your Patch Library</h3>
+          <div class="library-filters">
+            <select id="library-synth-filter" class="select-input select-small">
+              <option value="">All Synths</option>
+            </select>
+          </div>
+        </div>
+        <div id="patch-library-list" class="patch-library-list">
+          <p class="library-empty">No patches yet. Design your first one above!</p>
+        </div>
       </div>
     </section>
 

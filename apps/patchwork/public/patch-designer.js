@@ -20,16 +20,18 @@ function checkDesignerAuth() {
   const token = localStorage.getItem('auth_token');
   const gate = document.getElementById('designer-auth-gate');
   const ui = document.getElementById('designer-ui');
-  const savedSection = document.getElementById('saved-patches-section');
+  const librarySection = document.getElementById('patch-library-section');
 
   if (token) {
     gate?.classList.add('hidden');
     ui?.classList.remove('hidden');
+    librarySection?.classList.remove('hidden');
     loadUserSchemas();
+    loadPatchLibrary(); // Load all patches on page load
   } else {
     gate?.classList.remove('hidden');
     ui?.classList.add('hidden');
-    savedSection?.classList.add('hidden');
+    librarySection?.classList.add('hidden');
   }
 }
 
@@ -64,6 +66,9 @@ function setupEventListeners() {
   // MIDI controls
   document.getElementById('midi-output-select')?.addEventListener('change', handleMidiOutputChange);
   document.getElementById('send-midi-btn')?.addEventListener('click', handleSendMidi);
+
+  // Library filter
+  document.getElementById('library-synth-filter')?.addEventListener('change', handleLibraryFilter);
 }
 
 async function loadUserSchemas() {
@@ -328,10 +333,11 @@ async function handleSavePatch() {
       saveBtn.disabled = false;
     }, 2000);
 
-    // Refresh saved patches list
+    // Refresh saved patches list and library
     if (currentSchemaId) {
       loadSavedPatches(currentSchemaId);
     }
+    loadPatchLibrary();
   } catch (err) {
     alert(err instanceof Error ? err.message : String(err));
     saveBtn.textContent = originalText;
@@ -445,6 +451,158 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// ==========================================
+// PATCH LIBRARY
+// ==========================================
+
+let allPatches = [];
+let libraryFilter = '';
+
+async function loadPatchLibrary() {
+  const token = localStorage.getItem('auth_token');
+  if (!token) return;
+
+  try {
+    const res = await fetch(`${PATCH_API}/mine`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!res.ok) throw new Error('Failed to load patches');
+
+    allPatches = await res.json();
+    updateLibraryFilterOptions();
+    renderPatchLibrary();
+  } catch (err) {
+    console.error('Failed to load patch library', err);
+  }
+}
+
+function updateLibraryFilterOptions() {
+  const filterSelect = document.getElementById('library-synth-filter');
+  if (!filterSelect) return;
+
+  // Get unique synths from patches
+  const synths = new Map();
+  allPatches.forEach(p => {
+    const key = p.schema_id;
+    if (!synths.has(key)) {
+      synths.set(key, `${p.manufacturer} ${p.synth_name}`);
+    }
+  });
+
+  // Build options
+  filterSelect.innerHTML = '<option value="">All Synths</option>';
+  synths.forEach((name, id) => {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = name;
+    filterSelect.appendChild(option);
+  });
+}
+
+function handleLibraryFilter(e) {
+  libraryFilter = e.target.value;
+  renderPatchLibrary();
+}
+
+function renderPatchLibrary() {
+  const container = document.getElementById('patch-library-list');
+  if (!container) return;
+
+  // Filter patches
+  const filteredPatches = libraryFilter
+    ? allPatches.filter(p => p.schema_id === libraryFilter)
+    : allPatches;
+
+  if (!filteredPatches.length) {
+    container.innerHTML = '<p class="library-empty">No patches yet. Design your first one above!</p>';
+    return;
+  }
+
+  // Group by synth
+  const bysynth = {};
+  filteredPatches.forEach(p => {
+    const synthKey = `${p.manufacturer} ${p.synth_name}`;
+    if (!bysynth[synthKey]) {
+      bysynth[synthKey] = [];
+    }
+    bysynth[synthKey].push(p);
+  });
+
+  container.innerHTML = Object.entries(bysynth).map(([synth, patches]) => `
+    <div class="library-synth-group">
+      <h4 class="library-synth-name">${escapeHtml(synth)}</h4>
+      <div class="library-patches-grid">
+        ${patches.map(p => `
+          <div class="library-patch-card" onclick="loadLibraryPatch('${p.id}', '${p.schema_id}')">
+            <div class="library-patch-name">${escapeHtml(p.name)}</div>
+            ${p.description ? `<div class="library-patch-desc">${escapeHtml(p.description.substring(0, 80))}${p.description.length > 80 ? '...' : ''}</div>` : ''}
+            <div class="library-patch-date">${formatDate(p.created_at)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+window.loadLibraryPatch = async function(patchId, schemaId) {
+  const token = localStorage.getItem('auth_token');
+  if (!token) return;
+
+  try {
+    // First, make sure we have the schema selected
+    if (schemaId !== currentSchemaId) {
+      // Load the schema
+      const schemaRes = await fetch(`${SCHEMA_API}/${schemaId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (schemaRes.ok) {
+        const schemaData = await schemaRes.json();
+        currentSchemaId = schemaId;
+        currentSchema = schemaData.schema_json || schemaData;
+
+        // Update the synth selector
+        const synthSelect = document.getElementById('synth-select');
+        if (synthSelect) {
+          synthSelect.value = schemaId;
+        }
+
+        // Update synth info
+        const params = currentSchema.parameters || [];
+        const infoEl = document.getElementById('synth-info');
+        if (infoEl) {
+          infoEl.textContent = `${params.length} parameters`;
+        }
+      }
+    }
+
+    // Now load the patch
+    const res = await fetch(`${PATCH_API}/${patchId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!res.ok) throw new Error('Failed to load patch');
+
+    const data = await res.json();
+
+    generatedPatch = {
+      patch_name: data.name,
+      explanation: data.patch_json.explanation || data.description || '',
+      parameters: data.patch_json.parameters || [],
+      schema_id: data.schema_id,
+      synth_name: `${data.manufacturer} ${data.synth_name}`,
+      prompt: data.reasoning
+    };
+
+    renderGeneratedPatch(generatedPatch);
+
+    // Scroll to results
+    document.getElementById('output-result')?.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    alert(err instanceof Error ? err.message : String(err));
+  }
+};
 
 // ==========================================
 // MIDI FUNCTIONALITY
