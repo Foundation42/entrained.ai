@@ -156,6 +156,59 @@ class MidiService {
     port.send([statusByte, 6, valueMSB]);
     port.send([statusByte, 38, valueLSB]);
   }
+
+  // Send SysEx message for patch naming
+  // namingConfig: { method, sysex_template, max_length, encoding }
+  // sysex_template: array of bytes with "NAME" placeholder for name bytes
+  sendPatchName(patchName, namingConfig, output = null) {
+    const port = output || this.selectedOutput;
+    if (!port) {
+      throw new Error('No MIDI output selected');
+    }
+
+    if (!namingConfig || namingConfig.method === 'unsupported') {
+      throw new Error('Patch naming not supported for this synth');
+    }
+
+    if (namingConfig.method !== 'sysex' || !namingConfig.sysex_template) {
+      throw new Error(`Patch naming method "${namingConfig.method}" not yet implemented`);
+    }
+
+    // Truncate and pad name to max length
+    const maxLen = namingConfig.max_length || 16;
+    let name = patchName.substring(0, maxLen);
+    // Pad with spaces if needed
+    while (name.length < maxLen) {
+      name += ' ';
+    }
+
+    // Convert name to ASCII bytes
+    const nameBytes = [];
+    for (let i = 0; i < name.length; i++) {
+      let charCode = name.charCodeAt(i);
+      // Clamp to valid MIDI data range (0-127)
+      if (charCode > 127) charCode = 63; // Replace with '?'
+      nameBytes.push(charCode);
+    }
+
+    // Build the SysEx message by replacing "NAME" with actual bytes
+    const sysexMessage = [];
+    for (const item of namingConfig.sysex_template) {
+      if (item === 'NAME') {
+        // Insert all name bytes here
+        sysexMessage.push(...nameBytes);
+      } else {
+        sysexMessage.push(item);
+      }
+    }
+
+    console.log(`[MIDI] Sending patch name "${name.trim()}" via SysEx:`, sysexMessage);
+
+    // Send the SysEx message
+    port.send(new Uint8Array(sysexMessage));
+
+    return { sent: true, name: name.trim() };
+  }
 }
 
 // Global singleton

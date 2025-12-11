@@ -71,6 +71,23 @@ export interface SynthSchema {
   updated_at: number;
 }
 
+// SysEx patch naming configuration - how to send patch name to display
+export interface SysexPatchNaming {
+  method: 'sysex' | 'nrpn' | 'cc_sequence' | 'unsupported';
+  description?: string;
+  // For SysEx method: the full message template with placeholder
+  // e.g., [0xF0, 0x01, 0x2C, 0x01, 0x00, "NAME", 0xF7] where "NAME" is replaced with ASCII bytes
+  sysex_template?: (number | 'NAME')[];
+  // Max characters for patch name
+  max_length?: number;
+  // Character encoding (usually 'ascii')
+  encoding?: 'ascii' | 'utf8';
+  // For CC sequence: list of CCs to send name bytes to
+  cc_numbers?: number[];
+  // NRPN base for name bytes
+  nrpn_base?: number;
+}
+
 export interface ParsedSchema {
   manufacturer: string;
   synth_name: string;
@@ -82,7 +99,9 @@ export interface ParsedSchema {
   categories: string[];
   midi_channel?: number;
   sysex_header?: number[];
-   // Optional richer metadata for visualization/layout
+  // SysEx patch naming configuration
+  sysex_patch_naming?: SysexPatchNaming;
+  // Optional richer metadata for visualization/layout
   architecture?: SynthArchitecture;
 }
 

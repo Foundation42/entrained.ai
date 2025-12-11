@@ -137,6 +137,24 @@ export function patchDesignerPage(): string {
               </div>
               <div id="midi-error" class="error-message hidden"></div>
               <div id="midi-success" class="success-message hidden"></div>
+
+              <!-- TODO: REMOVE - Patch naming via SysEx is more complex than anticipated.
+                   Most synths require full patch dump read-modify-write, not a simple name command.
+                   This should be part of a proper Patch Librarian feature later. -->
+              <div id="patch-naming-section" class="patch-naming-section hidden">
+                <div class="naming-header">
+                  <span class="naming-label">Update Synth Display</span>
+                  <span id="naming-status" class="naming-status">Checking...</span>
+                </div>
+                <div class="naming-controls">
+                  <span id="naming-info" class="naming-info"></span>
+                  <button id="send-name-btn" class="btn btn-ghost btn-sm" disabled>
+                    Send Name
+                  </button>
+                </div>
+                <div id="naming-error" class="error-message hidden"></div>
+                <div id="naming-success" class="success-message hidden"></div>
+              </div>
             </div>
 
             <div id="midi-unsupported" class="midi-unsupported hidden">

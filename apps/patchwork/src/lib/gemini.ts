@@ -1,4 +1,4 @@
-import type { ParsedSchema, SynthParameter } from '../types';
+import type { ParsedSchema, SynthParameter, SysexPatchNaming } from '../types';
 
 const DEFAULT_MODEL = 'gemini-3-pro-preview';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
@@ -6,6 +6,55 @@ const GEMINI_UPLOAD_URL = `${GEMINI_API_BASE}/upload/v1beta/files`;
 
 function getGenerateUrl(model: string): string {
   return `${GEMINI_API_BASE}/v1beta/models/${model}:streamGenerateContent`;
+}
+
+function getGenerateContentUrl(model: string): string {
+  return `${GEMINI_API_BASE}/v1beta/models/${model}:generateContent`;
+}
+
+// Simple non-streaming Gemini call for quick Q&A
+interface GeminiConfig {
+  temperature?: number;
+  maxOutputTokens?: number;
+  responseMimeType?: string;
+}
+
+async function callGemini(
+  prompt: string,
+  apiKey: string,
+  model: string = DEFAULT_MODEL,
+  config: GeminiConfig = {}
+): Promise<string> {
+  const response = await fetch(`${getGenerateContentUrl(model)}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: config.temperature ?? 0.3,
+        maxOutputTokens: config.maxOutputTokens ?? 2048,
+        responseMimeType: config.responseMimeType ?? 'application/json'
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Gemini API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json() as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+    }>;
+  };
+
+  const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!content) {
+    throw new Error('No content in Gemini response');
+  }
+
+  return content;
 }
 
 const EXTRACTION_PROMPT = `You are a synthesizer parameter extraction expert. Analyze this synthesizer manual/documentation and extract a structured parameter schema with metadata and architecture.
@@ -670,6 +719,85 @@ ${userPrompt}`;
   } catch (e) {
     console.error(`[Gemini Patch] JSON parse error. Content: ${fullContent.substring(0, 500)}`);
     throw new Error(`Failed to parse Gemini response as JSON: ${e}`);
+  }
+}
+
+// ========================================
+// SYSEX PATCH NAMING LOOKUP
+// TODO: REMOVE - This approach doesn't work reliably. Most synths require
+// full patch dump read-modify-write for naming, not a simple SysEx command.
+// Gemini often hallucinates incorrect SysEx formats. Needs proper Patch Librarian.
+// ========================================
+
+const SYSEX_NAMING_PROMPT = `You are a synthesizer MIDI expert with deep knowledge of synthesizer MIDI implementations.
+
+I need to know how to send a patch name via MIDI to be displayed on a specific synthesizer's screen/display.
+
+USE YOUR KNOWLEDGE of synthesizer MIDI implementations. Most modern synthesizers from manufacturers like Sequential, Moog, Novation, Arturia, Korg, Roland, Yamaha, etc. support SysEx patch naming. You likely know the exact SysEx format from their MIDI implementation charts.
+
+For the synthesizer specified, provide the MIDI method to set the patch name that appears on the synth's display.
+
+**Common patterns you should know:**
+- Sequential/Dave Smith synths (Prophet, Pro 3, OB-6, etc.): Use SysEx with manufacturer ID 0x01 (Sequential)
+- Moog synths: Use SysEx with manufacturer ID 0x04
+- Novation synths: Use SysEx with manufacturer ID 0x00 0x20 0x29
+- Many synths use: F0 [mfr] [device] [command] [name bytes] F7
+
+Provide:
+
+1. **method**: One of:
+   - "sysex" - Uses System Exclusive messages (most common for modern synths)
+   - "nrpn" - Uses NRPN messages for name characters
+   - "cc_sequence" - Uses a sequence of CC messages
+   - "unsupported" - ONLY if you are certain the synth has no display or truly cannot receive names
+
+2. **sysex_template** (if method is "sysex"): An array of bytes for the SysEx message.
+   - Use decimal numbers for fixed bytes (e.g., 240 for 0xF0, 247 for 0xF7)
+   - Use the string "NAME" as a placeholder where the ASCII character bytes should be inserted
+   - Example: [240, 1, 44, 1, 0, "NAME", 247]
+
+3. **max_length**: Maximum characters for the patch name (typically 8-20 characters)
+
+4. **description**: Brief explanation of the SysEx format
+
+Return ONLY valid JSON, no markdown:
+
+{
+  "method": "sysex",
+  "description": "Brief explanation of the format",
+  "sysex_template": [240, ...bytes..., "NAME", ...bytes..., 247],
+  "max_length": 16,
+  "encoding": "ascii"
+}
+
+IMPORTANT: Default to assuming the synth DOES support patch naming unless you know for certain it doesn't (e.g., vintage analog with no display).
+
+SYNTHESIZER:`;
+
+export async function lookupSysexPatchNaming(
+  manufacturer: string,
+  synthName: string,
+  apiKey: string,
+  model: string = DEFAULT_MODEL
+): Promise<SysexPatchNaming> {
+  const fullPrompt = `${SYSEX_NAMING_PROMPT} ${manufacturer} ${synthName}`;
+
+  console.log(`[Gemini SysEx] Looking up patch naming for ${manufacturer} ${synthName}`);
+
+  try {
+    const content = await callGemini(fullPrompt, apiKey, model, {
+      temperature: 0.3,
+      maxOutputTokens: 1024
+    });
+
+    console.log(`[Gemini SysEx] Response: ${content.substring(0, 300)}`);
+
+    const result = JSON.parse(content) as SysexPatchNaming;
+    console.log(`[Gemini SysEx] Got method: ${result.method}`);
+    return result;
+  } catch (e) {
+    console.error(`[Gemini SysEx] Error: ${e}`);
+    return { method: 'unsupported', description: 'Failed to look up patch naming method' };
   }
 }
 

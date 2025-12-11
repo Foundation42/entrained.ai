@@ -67,6 +67,9 @@ function setupEventListeners() {
   document.getElementById('midi-output-select')?.addEventListener('change', handleMidiOutputChange);
   document.getElementById('send-midi-btn')?.addEventListener('click', handleSendMidi);
 
+  // Patch naming
+  document.getElementById('send-name-btn')?.addEventListener('click', handleSendPatchName);
+
   // Library filter
   document.getElementById('library-synth-filter')?.addEventListener('change', handleLibraryFilter);
 }
@@ -730,6 +733,16 @@ function handleMidiOutputChange() {
   if (select.value && window.midiService) {
     window.midiService.selectOutput(select.value);
   }
+
+  // Also update the patch naming button state
+  updatePatchNamingButtonState();
+}
+
+function updatePatchNamingButtonState() {
+  const sendNameBtn = document.getElementById('send-name-btn');
+  if (sendNameBtn && patchNamingConfig && patchNamingConfig.method !== 'unsupported') {
+    sendNameBtn.disabled = !generatedPatch || !window.midiService?.selectedOutput;
+  }
 }
 
 async function handleSendMidi() {
@@ -806,4 +819,154 @@ function showMidiSection() {
 
   // Try auto-match again in case synth changed
   autoMatchMidiDevice(window.midiService.getOutputs());
+
+  // Check for patch naming support
+  checkPatchNamingSupport();
+}
+
+// ==========================================
+// PATCH NAMING (SysEx)
+// ==========================================
+
+let patchNamingConfig = null;
+let patchNamingLoading = false;
+
+async function checkPatchNamingSupport() {
+  if (!currentSchemaId || patchNamingLoading) return;
+
+  const namingSection = document.getElementById('patch-naming-section');
+  const namingStatus = document.getElementById('naming-status');
+  const sendNameBtn = document.getElementById('send-name-btn');
+
+  if (!namingSection) return;
+
+  // Check if we already have it cached in currentSchema (but not if it's 'unsupported')
+  if (currentSchema?.sysex_patch_naming && currentSchema.sysex_patch_naming.method !== 'unsupported') {
+    patchNamingConfig = currentSchema.sysex_patch_naming;
+    showPatchNamingUI();
+    return;
+  }
+
+  // Fetch from API (which will look it up via Gemini if needed)
+  patchNamingLoading = true;
+  namingSection.classList.remove('hidden');
+  if (namingStatus) namingStatus.textContent = 'Checking...';
+  if (sendNameBtn) sendNameBtn.disabled = true;
+
+  const token = localStorage.getItem('auth_token');
+  if (!token) return;
+
+  // Force refresh if we had a cached 'unsupported' value
+  const needsRefresh = currentSchema?.sysex_patch_naming?.method === 'unsupported';
+  const url = `${SCHEMA_API}/${currentSchemaId}/patch-naming${needsRefresh ? '?refresh=1' : ''}`;
+
+  try {
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!res.ok) {
+      throw new Error('Failed to check patch naming');
+    }
+
+    const data = await res.json();
+    patchNamingConfig = data.naming;
+    console.log('[Patch Naming] Got config:', patchNamingConfig);
+
+    // Cache it locally
+    if (currentSchema) {
+      currentSchema.sysex_patch_naming = patchNamingConfig;
+    }
+
+    showPatchNamingUI();
+  } catch (err) {
+    console.error('[Patch Naming] Check failed:', err);
+    namingSection.classList.add('hidden');
+  } finally {
+    patchNamingLoading = false;
+  }
+}
+
+function showPatchNamingUI() {
+  const namingSection = document.getElementById('patch-naming-section');
+  const namingStatus = document.getElementById('naming-status');
+  const sendNameBtn = document.getElementById('send-name-btn');
+  const namingInfo = document.getElementById('naming-info');
+
+  console.log('[Patch Naming] showPatchNamingUI called, config:', patchNamingConfig);
+
+  if (!namingSection || !patchNamingConfig) {
+    console.log('[Patch Naming] Missing section or config');
+    return;
+  }
+
+  if (patchNamingConfig.method === 'unsupported') {
+    console.log('[Patch Naming] Method is unsupported, hiding section');
+    namingSection.classList.add('hidden');
+    return;
+  }
+
+  namingSection.classList.remove('hidden');
+
+  if (namingStatus) {
+    namingStatus.textContent = 'Supported';
+    namingStatus.className = 'naming-status status-ok';
+  }
+
+  if (namingInfo) {
+    const maxLen = patchNamingConfig.max_length || 16;
+    namingInfo.textContent = patchNamingConfig.description || `Max ${maxLen} characters`;
+  }
+
+  updatePatchNamingButtonState();
+}
+
+async function handleSendPatchName() {
+  console.log('[Patch Naming] handleSendPatchName called', {
+    hasGeneratedPatch: !!generatedPatch,
+    hasPatchNamingConfig: !!patchNamingConfig,
+    hasSelectedOutput: !!window.midiService?.selectedOutput,
+    selectedOutput: window.midiService?.selectedOutput?.name
+  });
+
+  if (!generatedPatch || !patchNamingConfig || !window.midiService?.selectedOutput) {
+    console.warn('[Patch Naming] Missing required data, returning early');
+    return;
+  }
+
+  const sendNameBtn = document.getElementById('send-name-btn');
+  const namingError = document.getElementById('naming-error');
+  const namingSuccess = document.getElementById('naming-success');
+
+  if (!sendNameBtn) return;
+
+  // Reset messages
+  namingError?.classList.add('hidden');
+  namingSuccess?.classList.add('hidden');
+
+  const originalText = sendNameBtn.textContent;
+  sendNameBtn.disabled = true;
+  sendNameBtn.textContent = 'Sending...';
+
+  try {
+    const result = window.midiService.sendPatchName(generatedPatch.patch_name, patchNamingConfig);
+
+    if (namingSuccess) {
+      namingSuccess.textContent = `Sent name "${result.name}" to synth display`;
+      namingSuccess.classList.remove('hidden');
+    }
+
+    setTimeout(() => {
+      namingSuccess?.classList.add('hidden');
+    }, 3000);
+  } catch (err) {
+    console.error('[Patch Naming] Send failed:', err);
+    if (namingError) {
+      namingError.textContent = err instanceof Error ? err.message : String(err);
+      namingError.classList.remove('hidden');
+    }
+  } finally {
+    sendNameBtn.textContent = originalText;
+    sendNameBtn.disabled = false;
+  }
 }

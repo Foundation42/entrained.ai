@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import type { Bindings, AuthUser, SynthSchema, ParsedSchema, ExtractionJobMessage } from '../types';
+import type { Bindings, AuthUser, SynthSchema, ParsedSchema, ExtractionJobMessage, SysexPatchNaming } from '../types';
 import { requireAuth, optionalAuth } from '../lib/auth';
+import { lookupSysexPatchNaming } from '../lib/gemini';
 
 type Variables = { user: AuthUser };
 
@@ -289,6 +290,78 @@ schemaRoutes.put('/:id', requireAuth(), async (c) => {
   ).bind(...params).run();
 
   return c.json({ success: true });
+});
+
+// TODO: REMOVE - SysEx patch naming doesn't work reliably. See gemini.ts for details.
+// Get or lookup SysEx patch naming method for a schema
+schemaRoutes.get('/:id/patch-naming', requireAuth(), async (c) => {
+  const schemaId = c.req.param('id');
+  const user = c.get('user');
+  const forceRefresh = c.req.query('refresh') === '1';
+
+  // Get schema
+  const schema = await c.env.DB.prepare(
+    `SELECT * FROM synth_schemas WHERE id = ?`
+  ).bind(schemaId).first<SynthSchema>();
+
+  if (!schema) {
+    return c.json({ error: 'Schema not found' }, 404);
+  }
+
+  // Check access
+  if (!schema.is_public && schema.user_id !== user.id) {
+    return c.json({ error: 'Access denied' }, 403);
+  }
+
+  const parsed = JSON.parse(schema.schema_json) as ParsedSchema;
+
+  // Check if we already have the naming method cached (unless force refresh)
+  if (parsed.sysex_patch_naming && !forceRefresh) {
+    return c.json({
+      cached: true,
+      naming: parsed.sysex_patch_naming
+    });
+  }
+
+  // Look it up via Gemini
+  const apiKey = c.env.GEMINI_API_KEY;
+  const model = c.env.GEMINI_MODEL || 'gemini-3-pro-preview';
+
+  try {
+    const naming = await lookupSysexPatchNaming(
+      schema.manufacturer,
+      schema.synth_name,
+      apiKey,
+      model
+    );
+
+    // Cache it in the schema if we own it - but only if it's actually supported
+    // Don't cache 'unsupported' as that might just be a bad Gemini response
+    if (schema.user_id === user.id && naming.method !== 'unsupported') {
+      parsed.sysex_patch_naming = naming;
+      await c.env.DB.prepare(
+        `UPDATE synth_schemas SET schema_json = ?, updated_at = ? WHERE id = ?`
+      ).bind(
+        JSON.stringify(parsed),
+        Math.floor(Date.now() / 1000),
+        schemaId
+      ).run();
+    }
+
+    return c.json({
+      cached: false,
+      naming
+    });
+  } catch (err) {
+    console.error('[Patch Naming] Lookup failed:', err);
+    return c.json({
+      cached: false,
+      naming: {
+        method: 'unsupported',
+        description: 'Failed to look up patch naming method'
+      } as SysexPatchNaming
+    });
+  }
 });
 
 // Delete schema (owner only)
