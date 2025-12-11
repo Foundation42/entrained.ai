@@ -97,6 +97,52 @@ export function patchDesignerPage(): string {
               </div>
             </div>
 
+            <!-- MIDI Send Section -->
+            <div id="midi-section" class="midi-section hidden">
+              <div class="midi-header">
+                <div class="midi-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                    <circle cx="8" cy="10" r="1.5" fill="currentColor"/>
+                    <circle cx="12" cy="10" r="1.5" fill="currentColor"/>
+                    <circle cx="16" cy="10" r="1.5" fill="currentColor"/>
+                    <circle cx="10" cy="14" r="1.5" fill="currentColor"/>
+                    <circle cx="14" cy="14" r="1.5" fill="currentColor"/>
+                  </svg>
+                </div>
+                <div class="midi-title">
+                  <span>Send to Synth</span>
+                  <span id="midi-status" class="midi-status">No devices</span>
+                </div>
+              </div>
+              <div class="midi-controls">
+                <select id="midi-output-select" class="select-input midi-select">
+                  <option value="">Select MIDI output...</option>
+                </select>
+                <button id="send-midi-btn" class="btn btn-primary" disabled>
+                  <span class="btn-text">Send Patch</span>
+                  <span class="btn-loading hidden">
+                    <svg class="spinner" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="60" stroke-linecap="round"/>
+                    </svg>
+                    Sending...
+                  </span>
+                </button>
+              </div>
+              <div id="midi-progress" class="midi-progress hidden">
+                <div class="progress-bar">
+                  <div id="midi-progress-fill" class="progress-fill"></div>
+                </div>
+                <span id="midi-progress-text" class="progress-text">0 / 0</span>
+              </div>
+              <div id="midi-error" class="error-message hidden"></div>
+              <div id="midi-success" class="success-message hidden"></div>
+            </div>
+
+            <div id="midi-unsupported" class="midi-unsupported hidden">
+              <p>Web MIDI not supported. Use Chrome or Edge to send patches directly to your synth.</p>
+            </div>
+
             <div id="patch-explanation" class="patch-explanation"></div>
 
             <div class="patch-parameters">
@@ -114,6 +160,7 @@ export function patchDesignerPage(): string {
       </div>
     </section>
 
+    <script src="/midi.js"></script>
     <script src="/patch-designer.js"></script>
     `
   );

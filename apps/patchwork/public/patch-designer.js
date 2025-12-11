@@ -6,10 +6,12 @@ let schemas = [];
 let currentSchemaId = null;
 let currentSchema = null;
 let generatedPatch = null;
+let midiInitialized = false;
 
 document.addEventListener('DOMContentLoaded', () => {
   setTimeout(checkDesignerAuth, 50);
   setupEventListeners();
+  initMidi();
 });
 
 window.recheckDesignerAuth = checkDesignerAuth;
@@ -58,6 +60,10 @@ function setupEventListeners() {
   // Save and copy buttons
   document.getElementById('save-patch-btn')?.addEventListener('click', handleSavePatch);
   document.getElementById('copy-patch-btn')?.addEventListener('click', handleCopyPatch);
+
+  // MIDI controls
+  document.getElementById('midi-output-select')?.addEventListener('change', handleMidiOutputChange);
+  document.getElementById('send-midi-btn')?.addEventListener('click', handleSendMidi);
 }
 
 async function loadUserSchemas() {
@@ -271,6 +277,9 @@ function renderGeneratedPatch(patch) {
       </div>
     `).join('');
   }
+
+  // Show MIDI controls
+  showMidiSection();
 }
 
 async function handleSavePatch() {
@@ -435,4 +444,208 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+// ==========================================
+// MIDI FUNCTIONALITY
+// ==========================================
+
+async function initMidi() {
+  const midiSection = document.getElementById('midi-section');
+  const midiUnsupported = document.getElementById('midi-unsupported');
+
+  // Check if Web MIDI is supported
+  if (!window.midiService || !window.midiService.isSupported) {
+    midiSection?.classList.add('hidden');
+    midiUnsupported?.classList.remove('hidden');
+    return;
+  }
+
+  try {
+    await window.midiService.initialize();
+    midiInitialized = true;
+
+    // Set up device change listener
+    window.midiService.onDevicesChanged = (outputs) => {
+      updateMidiDeviceList(outputs);
+    };
+
+    // Initial device list
+    updateMidiDeviceList(window.midiService.getOutputs());
+
+    console.log('[MIDI] Initialized in Patch Designer');
+  } catch (err) {
+    console.error('[MIDI] Init failed:', err);
+    updateMidiStatus('Permission denied', 'error');
+  }
+}
+
+function updateMidiDeviceList(outputs) {
+  const select = document.getElementById('midi-output-select');
+  const statusEl = document.getElementById('midi-status');
+
+  if (!select) return;
+
+  // Remember current selection
+  const currentValue = select.value;
+
+  // Clear and rebuild options
+  select.innerHTML = '<option value="">Select MIDI output...</option>';
+
+  const connectedOutputs = outputs.filter(o => o.state === 'connected');
+
+  connectedOutputs.forEach(output => {
+    const option = document.createElement('option');
+    option.value = output.id;
+    option.textContent = output.name;
+    select.appendChild(option);
+  });
+
+  // Restore selection if still available
+  if (currentValue && connectedOutputs.some(o => o.id === currentValue)) {
+    select.value = currentValue;
+  }
+
+  // Update status
+  if (connectedOutputs.length === 0) {
+    updateMidiStatus('No devices', 'warning');
+  } else if (connectedOutputs.length === 1) {
+    updateMidiStatus('1 device', 'ok');
+    // Auto-select if only one device
+    select.value = connectedOutputs[0].id;
+    handleMidiOutputChange();
+  } else {
+    updateMidiStatus(`${connectedOutputs.length} devices`, 'ok');
+  }
+
+  // Try to auto-match to current synth
+  autoMatchMidiDevice(connectedOutputs);
+}
+
+function autoMatchMidiDevice(outputs) {
+  if (!currentSchema) return;
+
+  const select = document.getElementById('midi-output-select');
+  if (!select || select.value) return; // Don't override manual selection
+
+  // Try to find a device matching the synth name
+  const synthName = currentSchema.synth_name?.toLowerCase() || '';
+  const manufacturer = currentSchema.manufacturer?.toLowerCase() || '';
+
+  const match = outputs.find(o => {
+    const name = o.name?.toLowerCase() || '';
+    return name.includes(synthName) ||
+           name.includes(manufacturer) ||
+           (synthName.includes('pro 3') && name.includes('pro 3')) ||
+           (synthName.includes('prophet') && name.includes('prophet'));
+  });
+
+  if (match) {
+    select.value = match.id;
+    handleMidiOutputChange();
+    console.log(`[MIDI] Auto-matched to ${match.name}`);
+  }
+}
+
+function updateMidiStatus(text, type = 'ok') {
+  const statusEl = document.getElementById('midi-status');
+  if (!statusEl) return;
+
+  statusEl.textContent = text;
+  statusEl.className = 'midi-status';
+  if (type === 'error') statusEl.classList.add('status-error');
+  else if (type === 'warning') statusEl.classList.add('status-warning');
+  else statusEl.classList.add('status-ok');
+}
+
+function handleMidiOutputChange() {
+  const select = document.getElementById('midi-output-select');
+  const sendBtn = document.getElementById('send-midi-btn');
+
+  if (!select || !sendBtn) return;
+
+  const hasSelection = !!select.value;
+  const hasPatch = !!generatedPatch;
+
+  sendBtn.disabled = !(hasSelection && hasPatch);
+
+  if (select.value && window.midiService) {
+    window.midiService.selectOutput(select.value);
+  }
+}
+
+async function handleSendMidi() {
+  if (!generatedPatch || !window.midiService?.selectedOutput) return;
+
+  const sendBtn = document.getElementById('send-midi-btn');
+  const btnText = sendBtn.querySelector('.btn-text');
+  const btnLoading = sendBtn.querySelector('.btn-loading');
+  const progressEl = document.getElementById('midi-progress');
+  const progressFill = document.getElementById('midi-progress-fill');
+  const progressText = document.getElementById('midi-progress-text');
+  const errorEl = document.getElementById('midi-error');
+  const successEl = document.getElementById('midi-success');
+
+  // Reset UI
+  errorEl?.classList.add('hidden');
+  successEl?.classList.add('hidden');
+
+  // Show loading state
+  sendBtn.disabled = true;
+  btnText?.classList.add('hidden');
+  btnLoading?.classList.remove('hidden');
+  progressEl?.classList.remove('hidden');
+
+  try {
+    const result = await window.midiService.sendPatch(
+      generatedPatch.parameters,
+      0, // MIDI channel 0
+      8, // 8ms delay between messages
+      (progress) => {
+        // Update progress bar
+        const percent = (progress.current / progress.total) * 100;
+        if (progressFill) progressFill.style.width = `${percent}%`;
+        if (progressText) progressText.textContent = `${progress.current} / ${progress.total}`;
+      }
+    );
+
+    // Success!
+    if (successEl) {
+      successEl.textContent = `Sent ${result.sent} parameters to ${window.midiService.selectedOutput.name}`;
+      successEl.classList.remove('hidden');
+    }
+
+    // Keep progress at 100% briefly
+    setTimeout(() => {
+      progressEl?.classList.add('hidden');
+      if (progressFill) progressFill.style.width = '0%';
+    }, 1500);
+
+  } catch (err) {
+    console.error('[MIDI] Send failed:', err);
+    if (errorEl) {
+      errorEl.textContent = err instanceof Error ? err.message : String(err);
+      errorEl.classList.remove('hidden');
+    }
+    progressEl?.classList.add('hidden');
+  } finally {
+    sendBtn.disabled = false;
+    btnText?.classList.remove('hidden');
+    btnLoading?.classList.add('hidden');
+    handleMidiOutputChange(); // Re-check button state
+  }
+}
+
+// Show MIDI section when patch is generated
+function showMidiSection() {
+  if (!midiInitialized) return;
+
+  const midiSection = document.getElementById('midi-section');
+  midiSection?.classList.remove('hidden');
+
+  // Update send button state
+  handleMidiOutputChange();
+
+  // Try auto-match again in case synth changed
+  autoMatchMidiDevice(window.midiService.getOutputs());
 }
