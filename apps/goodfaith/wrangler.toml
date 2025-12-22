@@ -1,0 +1,27 @@
+name = "goodfaith"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Custom domain
+routes = [
+  { pattern = "goodfaith.entrained.ai", custom_domain = true }
+]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "goodfaith-db"
+database_id = "07f0758b-f578-4001-8035-df7c64c5d7c8"
+
+# KV for caching
+[[kv_namespaces]]
+binding = "KV"
+id = "25534207e9e343fbaac70e815e4b2a41"
+
+# Environment variables (secrets set via wrangler secret)
+[vars]
+ENVIRONMENT = "production"
+DOMAIN = "goodfaith.entrained.ai"
+PARENT_SITE = "https://entrained.ai"
+AI_MODEL = "gemini-3-flash-preview"
