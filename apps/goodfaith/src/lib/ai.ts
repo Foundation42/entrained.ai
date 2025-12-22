@@ -503,3 +503,108 @@ async function generateImageMask(
     mimeType: maskPart.inlineData.mimeType,
   };
 }
+
+// ============================================
+// MACRO SYSTEM - Inline AI content generation
+// ============================================
+
+// Regex to find {type: content} macros at START OF LINE only
+// Must be: start of string OR newline, then {type: content}
+const MACRO_REGEX = /(?:^|\n)(\{(\w+):\s*([^}]+)\})/g;
+
+// Process a single macro
+async function processMacro(
+  type: string,
+  content: string,
+  env: Env
+): Promise<string> {
+  switch (type.toLowerCase()) {
+    case 'haiku':
+      return await generateHaiku(content, env);
+    default:
+      // Unknown macro - leave as-is
+      return `{${type}: ${content}}`;
+  }
+}
+
+// Generate a haiku about a topic
+async function generateHaiku(topic: string, env: Env): Promise<string> {
+  const prompt = `Write a haiku about: ${topic}
+
+Requirements:
+- Traditional 5-7-5 syllable structure
+- Evocative and thoughtful
+- Return ONLY the three lines of the haiku, nothing else
+- No quotes, no explanation, just the haiku`;
+
+  try {
+    const result = await callGemini(prompt, env.GEMINI_API_KEY, env.AI_MODEL);
+    // Format as a nice blockquote
+    const lines = result.trim().split('\n').filter(l => l.trim());
+    const formatted = lines.map(l => `> *${l.trim()}*`).join('\n');
+    return `${formatted}\n> — *AI-generated haiku on "${topic}"*`;
+  } catch (e) {
+    console.error('[Macro:haiku] Failed:', e);
+    return `{haiku: ${topic}} *(generation failed)*`;
+  }
+}
+
+// Extract code blocks and inline code, returning placeholders
+function protectCodeBlocks(content: string): { protected: string; blocks: string[] } {
+  const blocks: string[] = [];
+
+  // First protect fenced code blocks (```...```)
+  let protected_ = content.replace(/```[\s\S]*?```/g, (match) => {
+    blocks.push(match);
+    return `__CODE_BLOCK_${blocks.length - 1}__`;
+  });
+
+  // Then protect inline code (`...`)
+  protected_ = protected_.replace(/`[^`]+`/g, (match) => {
+    blocks.push(match);
+    return `__CODE_BLOCK_${blocks.length - 1}__`;
+  });
+
+  return { protected: protected_, blocks };
+}
+
+// Restore code blocks from placeholders
+function restoreCodeBlocks(content: string, blocks: string[]): string {
+  let result = content;
+  for (let i = 0; i < blocks.length; i++) {
+    result = result.replace(`__CODE_BLOCK_${i}__`, blocks[i]);
+  }
+  return result;
+}
+
+// Process all macros in content
+export async function processMacros(
+  content: string,
+  env: Env
+): Promise<{ processed: string; macrosFound: number }> {
+  // Protect code blocks from macro expansion
+  const { protected: protectedContent, blocks } = protectCodeBlocks(content);
+
+  const matches = [...protectedContent.matchAll(MACRO_REGEX)];
+
+  if (matches.length === 0) {
+    return { processed: content, macrosFound: 0 };
+  }
+
+  let result = protectedContent;
+  let macrosProcessed = 0;
+
+  // Process each macro (in sequence to avoid race conditions with string replacement)
+  for (const match of matches) {
+    const [fullMatch, macroWithBraces, type, macroContent] = match;
+    const replacement = await processMacro(type, macroContent.trim(), env);
+    // Only replace the macro part, preserve the newline if present
+    result = result.replace(macroWithBraces, replacement);
+    macrosProcessed++;
+  }
+
+  // Restore code blocks
+  result = restoreCodeBlocks(result, blocks);
+
+  return { processed: result, macrosFound: macrosProcessed };
+}

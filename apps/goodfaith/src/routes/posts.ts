@@ -3,8 +3,8 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import type { Env, PostRow, CommunityRow, CommentRow } from '../types';
 import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
-import { rowToPost, rowToComment, saveEvaluation, updateProfileStats } from '../lib/db';
-import { evaluateContent, calculateStatImpact } from '../lib/ai';
+import { rowToPost, rowToComment, saveEvaluation, updateProfileStats, awardXP } from '../lib/db';
+import { evaluateContent, calculateStatImpact, processMacros } from '../lib/ai';
 
 const posts = new Hono<{ Bindings: Env }>();
 
@@ -136,8 +136,11 @@ posts.post('/', async (c) => {
     return c.json({ error: 'Content too long (max 40000 chars)' }, 400);
   }
 
+  // Process macros (e.g., {haiku: topic})
+  const { processed: processedContent } = await processMacros(body.content, c.env);
+
   // Evaluate content
-  const evaluation = await evaluateContent(body.content, 'post', {}, c.env);
+  const evaluation = await evaluateContent(processedContent, 'post', {}, c.env);
   evaluation.content_id = nanoid(); // Will be post ID
 
   // Calculate impact
@@ -158,7 +161,7 @@ posts.post('/', async (c) => {
     profile.id,
     body.cloaked ? 1 : 0,
     body.title,
-    body.content,
+    processedContent,
     now,
     evaluation.id
   ).run();
@@ -173,6 +176,16 @@ posts.post('/', async (c) => {
     impact.statChanges,
     impact.cloakQuotaDelta
   );
+
+  // Award XP for creating a post (15 base, quality multiplier 0.5-1.5)
+  const avgScore = (
+    evaluation.scores.good_faith +
+    evaluation.scores.substantive +
+    evaluation.scores.charitable +
+    evaluation.scores.source_quality
+  ) / 4;
+  const qualityMultiplier = 0.5 + (avgScore / 100);
+  const xpAwarded = await awardXP(c.env.DB, profile.id, 15, qualityMultiplier);
 
   // Update community post count
   await c.env.DB.prepare(
@@ -208,6 +221,7 @@ posts.post('/', async (c) => {
         reasoning: evaluation.reasoning,
       },
       impact,
+      xp_awarded: xpAwarded,
     }
   }, 201);
 });

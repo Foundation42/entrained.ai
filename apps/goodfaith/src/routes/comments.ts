@@ -3,8 +3,8 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import type { Env, CommentRow, PostRow } from '../types';
 import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
-import { rowToComment, saveEvaluation, updateProfileStats, generateCommentPath } from '../lib/db';
-import { evaluateContent, calculateStatImpact } from '../lib/ai';
+import { rowToComment, saveEvaluation, updateProfileStats, generateCommentPath, awardXP } from '../lib/db';
+import { evaluateContent, calculateStatImpact, processMacros } from '../lib/ai';
 
 const comments = new Hono<{ Bindings: Env }>();
 
@@ -79,8 +79,11 @@ comments.post('/', async (c) => {
   // Generate path for threading
   const { path, depth } = await generateCommentPath(c.env.DB, postId, body.parent_id);
 
+  // Process macros (e.g., {haiku: topic})
+  const { processed: processedContent } = await processMacros(body.content, c.env);
+
   // Evaluate content
-  const evaluation = await evaluateContent(body.content, 'comment', {
+  const evaluation = await evaluateContent(processedContent, 'comment', {
     parentContent,
     threadSummary: postRow.title,
   }, c.env);
@@ -112,7 +115,7 @@ comments.post('/', async (c) => {
     body.parent_id ?? null,
     profile.id,
     body.cloaked ? 1 : 0,
-    body.content,
+    processedContent,
     now,
     evaluation.id,
     body.sentiment ?? null,
@@ -145,6 +148,16 @@ comments.post('/', async (c) => {
     impact.cloakQuotaDelta
   );
 
+  // Award XP for creating a comment (8 base, quality multiplier 0.5-1.5)
+  const avgScore = (
+    evaluation.scores.good_faith +
+    evaluation.scores.substantive +
+    evaluation.scores.charitable +
+    evaluation.scores.source_quality
+  ) / 4;
+  const qualityMultiplier = 0.5 + (avgScore / 100);
+  const xpAwarded = await awardXP(c.env.DB, profile.id, 8, qualityMultiplier);
+
   // Record action
   await c.env.DB.prepare(`
     INSERT INTO user_actions (id, profile_id, action_type, target_id, community_id, timestamp, impact)
@@ -175,6 +188,7 @@ comments.post('/', async (c) => {
       },
       impact,
       force_uncloaked: forceUncloaked,
+      xp_awarded: xpAwarded,
     }
   }, 201);
 });

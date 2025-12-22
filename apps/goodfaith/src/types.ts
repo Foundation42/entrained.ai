@@ -30,6 +30,7 @@ export interface Profile {
   created_at: number;
   stats: ProfileStats;
   level: number;
+  xp: number;
   class: ClassType | null;
   cloak_quota: number;
   avatar_url?: string;  // From sprites.entrained.ai via EAP
@@ -45,6 +46,7 @@ export interface ProfileRow {
   stats_charitable: number;
   stats_source_quality: number;
   level: number;
+  xp: number;
   class: string | null;
   cloak_quota: number;
   avatar_url: string | null;

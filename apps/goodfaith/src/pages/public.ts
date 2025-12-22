@@ -75,6 +75,11 @@ function layout(title: string, content: string): string {
     nav { display: flex; gap: 1.5rem; align-items: center; }
     nav a { color: var(--text-secondary); }
     nav a:hover { color: var(--text); text-decoration: none; }
+    .nav-guest { display: flex; gap: 1.5rem; }
+    @media (max-width: 600px) {
+      nav { gap: 0.75rem; }
+      .nav-guest { gap: 0.75rem; }
+    }
 
     /* MMO-style stats HUD */
     .stats-hud {
@@ -147,8 +152,24 @@ function layout(title: string, content: string): string {
       background: var(--border);
     }
     @media (max-width: 768px) {
-      .stat-bars { display: none; }
-      .stats-hud { padding: 0.375rem 0.75rem; }
+      .stats-hud { padding: 0.375rem 0.75rem; gap: 0.75rem; }
+      .stat-bars { gap: 0.25rem; }
+      .stat-bar-track { width: 32px; height: 5px; }
+      .stat-bar-label { font-size: 0.5rem; }
+      .hud-divider { height: 20px; }
+      .cloak-meter { display: none; }
+    }
+    @media (max-width: 480px) {
+      header .container { padding: 0 0.75rem; }
+      .logo { font-size: 1.25rem; }
+      .stats-hud { padding: 0.25rem 0.5rem; gap: 0.5rem; }
+      .stat-bars { gap: 0.125rem; }
+      .stat-bar-track { width: 24px; height: 4px; }
+      .stat-bar-label { display: none; }
+      .hud-divider { display: none; }
+      .player-info { gap: 0; }
+      .player-name { font-size: 0.75rem; }
+      .player-level { font-size: 0.625rem; }
     }
 
     /* Player Card Modal */
@@ -463,8 +484,10 @@ function layout(title: string, content: string): string {
     <div class="container">
       <a href="/" class="logo">Good<span>Faith</span></a>
       <nav>
-        <a href="/about">About</a>
-        <a href="/how-it-works">How It Works</a>
+        <div id="nav-guest-links" class="nav-guest">
+          <a href="/about">About</a>
+          <a href="/how-it-works">How It Works</a>
+        </div>
         <div id="auth-nav">
           <a href="https://auth.entrained.ai?return_to=https://goodfaith.entrained.ai" class="btn">Sign In</a>
         </div>
@@ -507,8 +530,11 @@ function layout(title: string, content: string): string {
       const token = localStorage.getItem('auth_token');
       const user = localStorage.getItem('auth_user');
       const authNav = document.getElementById('auth-nav');
+      const guestLinks = document.getElementById('nav-guest-links');
 
       if (token && user) {
+        // Hide About/How It Works when logged in to save space
+        if (guestLinks) guestLinks.style.display = 'none';
         try {
           const userData = JSON.parse(user);
 
@@ -526,8 +552,6 @@ function layout(title: string, content: string): string {
               const stats = profile.stats || { good_faith: 50, substantive: 50, charitable: 50, source_quality: 50 };
               const level = profile.level || 1;
               const xp = profile.xp || 0;
-              const xpForNext = level * 100; // Simple XP curve
-              const xpPercent = Math.min(100, (xp % xpForNext) / xpForNext * 100);
               const cloakQuota = profile.cloak_quota ?? 100;
 
               // Store profile globally for player card
@@ -563,7 +587,7 @@ function layout(title: string, content: string): string {
                     <div class="hud-divider"></div>
                     <div class="player-info">
                       <span class="player-name">\${profile.username || userData.display_name || 'Adventurer'}</span>
-                      <span class="player-level">Lv.\${level} · \${Math.round(xpPercent)}% XP</span>
+                      <span class="player-level">Lv.\${level} · \${xp} XP</span>
                     </div>
                   </div>
                   <a href="#" onclick="event.stopPropagation(); logout()" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; margin-left: 0.5rem;">⏻</a>
@@ -623,6 +647,7 @@ function layout(title: string, content: string): string {
           const rawAnalysis = data.data.analysis || '';
           const stats = profile.stats || {};
           const level = profile.level || 1;
+          const xp = profile.xp || 0;
           const cloakQuota = profile.cloak_quota ?? 100;
 
           // Get class emoji
@@ -697,7 +722,7 @@ function layout(title: string, content: string): string {
             </div>
 
             <div style="margin-top: 1rem; text-align: center; font-size: 0.75rem; color: var(--text-secondary);">
-              👻 Cloak Quota: \${cloakQuota}% · Member since \${new Date(profile.created_at).toLocaleDateString()}
+              ⭐ \${xp} XP · 👻 Cloak: \${cloakQuota}% · Member since \${new Date(profile.created_at).toLocaleDateString()}
             </div>
           \`;
           // Set analysis separately to avoid template literal issues
@@ -1972,7 +1997,7 @@ export function createPostPage(community: any): string {
             }
 
             // Redirect to new post
-            window.location.href = '/c/${community.name}/p/' + data.data.id;
+            window.location.href = '/c/${community.name}/p/' + data.data.post.id;
           } catch (err) {
             btn.disabled = false;
             btn.textContent = 'Create Post';

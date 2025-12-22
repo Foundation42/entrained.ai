@@ -61,6 +61,7 @@ export function rowToProfile(row: ProfileRow): Profile {
       source_quality: row.stats_source_quality,
     },
     level: row.level,
+    xp: row.xp || 0,
     class: row.class as Profile['class'],
     cloak_quota: row.cloak_quota,
     avatar_url: row.avatar_url ?? undefined,

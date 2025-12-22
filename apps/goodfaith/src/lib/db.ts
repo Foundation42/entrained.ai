@@ -166,6 +166,23 @@ export async function generateCommentPath(
   };
 }
 
+// Award XP to a profile
+export async function awardXP(
+  db: D1Database,
+  profileId: string,
+  baseXP: number,
+  qualityMultiplier: number = 1.0
+): Promise<number> {
+  // Calculate final XP with quality bonus
+  const xpAwarded = Math.round(baseXP * qualityMultiplier);
+
+  await db.prepare(
+    'UPDATE profiles SET xp = xp + ? WHERE id = ?'
+  ).bind(xpAwarded, profileId).run();
+
+  return xpAwarded;
+}
+
 // Update profile stats after evaluation
 export async function updateProfileStats(
   db: D1Database,
