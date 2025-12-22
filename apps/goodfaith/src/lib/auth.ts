@@ -63,6 +63,7 @@ export function rowToProfile(row: ProfileRow): Profile {
     level: row.level,
     class: row.class as Profile['class'],
     cloak_quota: row.cloak_quota,
+    avatar_url: row.avatar_url ?? undefined,
   };
 }
 

@@ -65,7 +65,9 @@ app.post('/api/generate', async (c) => {
 
     // Upload to R2
     const sheetId = nanoid();
-    const r2Key = `sheets/${category}/${body.theme}/${sheetId}.png`;
+    // Sanitize theme for URL-safe R2 key
+    const safeTheme = body.theme.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const r2Key = `sheets/${category}/${safeTheme}/${sheetId}.png`;
 
     await uploadToR2(c.env.ASSETS, r2Key, imageData, mimeType);
     const url = getPublicUrl(r2Key);
@@ -75,7 +77,7 @@ app.post('/api/generate', async (c) => {
     let maskUrl: string | null = null;
 
     if (maskData && maskMimeType) {
-      maskR2Key = `sheets/${category}/${body.theme}/${sheetId}_mask.png`;
+      maskR2Key = `sheets/${category}/${safeTheme}/${sheetId}_mask.png`;
       await uploadToR2(c.env.ASSETS, maskR2Key, maskData, maskMimeType);
       maskUrl = getPublicUrl(maskR2Key);
       console.log(`[Generate] Mask uploaded: ${maskUrl}`);
@@ -304,6 +306,45 @@ app.delete('/api/sheets/:id', async (c) => {
   }
 });
 
+// POST /api/avatars - Upload a rendered avatar composite
+app.post('/api/avatars', async (c) => {
+  try {
+    const body = await c.req.json<{ imageData: string; sheetId?: string }>();
+
+    if (!body.imageData) {
+      return c.json({ error: 'imageData is required' }, 400);
+    }
+
+    // imageData should be base64 encoded PNG (data URL or raw base64)
+    let base64Data = body.imageData;
+    if (base64Data.startsWith('data:')) {
+      base64Data = base64Data.split(',')[1];
+    }
+
+    const imageBuffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+
+    // Generate unique avatar ID
+    const avatarId = nanoid();
+    const r2Key = `avatars/${avatarId}.png`;
+
+    // Upload to R2
+    await uploadToR2(c.env.ASSETS, r2Key, imageBuffer.buffer as ArrayBuffer, 'image/png');
+    const url = getPublicUrl(r2Key);
+
+    console.log(`[Avatar] Uploaded: ${url}`);
+
+    return c.json({
+      data: {
+        id: avatarId,
+        url,
+      }
+    }, 201);
+  } catch (err) {
+    console.error('[Avatar] Upload error:', err);
+    return c.json({ error: 'Failed to upload avatar' }, 500);
+  }
+});
+
 // ================================
 // Public Pages
 // ================================
@@ -311,6 +352,13 @@ app.delete('/api/sheets/:id', async (c) => {
 // Playground UI
 app.get('/', async (c) => {
   const sheets = await getSheets(c.env.DB, { limit: 10 });
+  return c.html(playgroundPage(sheets));
+});
+
+// EAP Intent endpoint for avatar.create capability
+app.get('/create', async (c) => {
+  const sheets = await getSheets(c.env.DB, { limit: 10 });
+  // Serves the same playground page - intent is parsed client-side from ?intent= param
   return c.html(playgroundPage(sheets));
 });
 
@@ -329,6 +377,104 @@ app.get('/assets/*', async (c) => {
   headers.set('ETag', object.httpEtag);
 
   return new Response(object.body, { headers });
+});
+
+// ================================
+// EAP Manifest
+// ================================
+
+app.get('/manifest.json', (c) => {
+  const manifest = {
+    app: 'sprites.entrained.ai',
+    version: '1.0.0',
+    name: 'Sprite Generator',
+    description: 'AI-powered sprite sheet generation and avatar composition',
+
+    capabilities: [
+      {
+        id: 'avatar.create',
+        name: 'Create Avatar',
+        description: 'Generate or compose a sprite avatar from modular parts',
+        endpoint: '/create',
+        method: 'GET',
+        parameters: {
+          theme: { type: 'string', optional: true, description: 'Visual theme (e.g., robot, fantasy, cyberpunk)' },
+          style: { type: 'string', optional: true, description: 'Art style (flat_vector, pixel_art, etc.)' },
+          returnTo: { type: 'url', required: true, description: 'URL to return to after completion' },
+        },
+        returns: {
+          type: 'object',
+          schema: {
+            avatarUrl: 'string',
+            recipe: 'object',
+            sheetId: 'string',
+          },
+        },
+        aiInstructions: {
+          summary: 'Create pixel art or vector avatars from themes and styles',
+          examples: [
+            {
+              input: { theme: 'robot', style: 'pixel_art' },
+              output: { avatarUrl: 'https://sprites.entrained.ai/avatars/...', recipe: { layers: [] } },
+            },
+          ],
+          tips: [
+            'Pixel art works best for retro game aesthetics',
+            'Flat vector is ideal for modern UI',
+          ],
+        },
+      },
+      {
+        id: 'spritesheet.generate',
+        name: 'Generate Sprite Sheet',
+        description: 'AI-generate modular sprite sheets for games',
+        endpoint: '/generate',
+        method: 'GET',
+        parameters: {
+          theme: { type: 'string', required: true, description: 'Visual theme' },
+          category: { type: 'string', required: true, description: 'avatar, tileset, particles, ships, weapons, badges' },
+          style: { type: 'string', required: true, description: 'Art style' },
+          gridSize: { type: 'number', optional: true, description: 'Grid size (3 or 4)', default: 3 },
+          returnTo: { type: 'url', required: true, description: 'URL to return to after completion' },
+        },
+        returns: {
+          type: 'object',
+          schema: {
+            sheetId: 'string',
+            sheetUrl: 'string',
+            slots: 'array',
+          },
+        },
+      },
+    ],
+
+    permissions: ['storage.write'],
+
+    introspection: {
+      health: '/health',
+    },
+
+    ai: {
+      apiEndpoint: '/api',
+      instructions: {
+        summary: 'Sprite Generator creates modular sprite sheets and composable avatars using AI',
+        capabilities: [
+          'Generate themed sprite sheets (avatars, tilesets, particles, ships, weapons, badges)',
+          'Compose avatars from layered sprite parts',
+          'Export recipes for avatar configurations',
+        ],
+        bestPractices: [
+          'Use specific themes for better results',
+          'Pixel art style works best for small sprites',
+          'Avatar sheets allow mixing and matching parts',
+        ],
+      },
+    },
+  };
+
+  return c.json(manifest, 200, {
+    'Cache-Control': 'public, max-age=300',
+  });
 });
 
 export default app;

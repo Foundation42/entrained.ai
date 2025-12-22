@@ -641,9 +641,14 @@ function layout(title: string, content: string): string {
             return '<p>' + escaped + '</p>';
           }).join('');
 
+          // Show custom avatar if available, otherwise emoji
+          const avatarHtml = profile.avatar_url
+            ? '<img src="' + profile.avatar_url + '" alt="Avatar" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;">'
+            : emoji;
+
           content.innerHTML = \`
             <div class="player-card-header">
-              <div class="player-card-avatar">\${emoji}</div>
+              <div class="player-card-avatar">\${avatarHtml}</div>
               <div class="player-card-name">\${profile.username || 'Adventurer'}</div>
               <div class="player-card-title">Level \${level} \${profile.class || 'Seeker'}</div>
             </div>
@@ -672,6 +677,25 @@ function layout(title: string, content: string): string {
               <div id="analysis-text"></div>
             </div>
 
+            \${data.data.badges && data.data.badges.length > 0 ? \`
+            <div style="margin-top: 1rem;">
+              <h4 style="margin-bottom: 0.5rem; color: var(--accent);">🏆 Badges</h4>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                \${data.data.badges.map(b => \`
+                  <div title="\${b.name}: \${b.description || ''}" style="width: 48px; height: 48px; border-radius: 8px; overflow: hidden; background: var(--bg); border: 2px solid var(--border);">
+                    <img src="\${b.image_url}" alt="\${b.name}" style="width: 100%; height: 100%; object-fit: cover;">
+                  </div>
+                \`).join('')}
+              </div>
+            </div>
+            \` : ''}
+
+            <div style="margin-top: 1rem; text-align: center;">
+              <button class="btn btn-secondary" onclick="openAvatarCreator()" style="font-size: 0.875rem;">
+                🎨 Create Custom Avatar
+              </button>
+            </div>
+
             <div style="margin-top: 1rem; text-align: center; font-size: 0.75rem; color: var(--text-secondary);">
               👻 Cloak Quota: \${cloakQuota}% · Member since \${new Date(profile.created_at).toLocaleDateString()}
             </div>
@@ -695,6 +719,71 @@ function layout(title: string, content: string): string {
     // Close on escape key
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closePlayerCard();
+    });
+
+    // EAP: Avatar Creator integration
+    let avatarWindow = null;
+
+    function openAvatarCreator() {
+      // Build the intent URL for sprites.entrained.ai
+      const returnTo = encodeURIComponent(window.location.origin + window.location.pathname);
+      const intentUrl = 'https://sprites.entrained.ai/create?intent=' + encodeURIComponent(JSON.stringify({
+        capability: 'avatar.create',
+        params: {
+          theme: 'avatar',
+          style: 'flat_vector',
+          returnTo: window.location.origin + window.location.pathname
+        },
+        caller: {
+          app: 'goodfaith.entrained.ai',
+          name: 'GoodFaith'
+        }
+      }));
+
+      // Open in a new window/tab
+      avatarWindow = window.open(intentUrl, 'sprites-avatar-creator', 'width=1200,height=900');
+
+      // Close the player card modal
+      closePlayerCard();
+    }
+
+    // Listen for postMessage from sprites app
+    window.addEventListener('message', (event) => {
+      // Verify origin
+      if (event.origin !== 'https://sprites.entrained.ai') return;
+
+      const data = event.data;
+      if (data.type === 'eap:result' && data.capability === 'avatar.create') {
+        console.log('[EAP] Received avatar result:', data.result);
+
+        // Save avatar URL to profile
+        const token = localStorage.getItem('auth_token');
+        if (token && data.result?.avatarUrl) {
+          fetch('/api/me/avatar', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + token
+            },
+            body: JSON.stringify({ avatar_url: data.result.avatarUrl })
+          }).then(() => {
+            // Reload to show new avatar
+            window.location.reload();
+          }).catch(err => {
+            console.error('Failed to save avatar:', err);
+          });
+        }
+
+        // Close the popup if still open
+        if (avatarWindow && !avatarWindow.closed) {
+          avatarWindow.close();
+        }
+      } else if (data.type === 'eap:cancel') {
+        console.log('[EAP] Avatar creation cancelled');
+        if (avatarWindow && !avatarWindow.closed) {
+          avatarWindow.close();
+        }
+      }
     });
   </script>
 
@@ -855,13 +944,16 @@ export function communityPage(community: any, posts: any[]): string {
   const postList = posts.length > 0
     ? `<ul class="post-list">
         ${posts.map(p => `
-          <li class="post-item">
-            <a href="/c/${community.name}/p/${p.id}" class="post-title">${escapeHtml(p.title)}</a>
-            <p class="meta">
-              by ${p.author_cloaked ? '<em>anonymous</em>' : (p.author_username || 'unknown')}
-              &bull; ${p.comment_count} comments
-              &bull; ${formatTime(p.created_at)}
-            </p>
+          <li class="post-item" style="display: flex; gap: 0.75rem; align-items: flex-start;">
+            ${renderAvatar(p.author_cloaked ? null : p.author_avatar, 32)}
+            <div>
+              <a href="/c/${community.name}/p/${p.id}" class="post-title">${escapeHtml(p.title)}</a>
+              <p class="meta">
+                by ${p.author_cloaked ? '<em>anonymous</em>' : (p.author_username || 'unknown')}
+                &bull; ${p.comment_count} comments
+                &bull; ${formatTime(p.created_at)}
+              </p>
+            </div>
           </li>
         `).join('')}
       </ul>`
@@ -897,14 +989,19 @@ export function communityPage(community: any, posts: any[]): string {
 export function postPage(post: any, comments: any[]): string {
   const commentTree = comments.map(c => `
     <div class="comment" style="--depth: ${c.depth}" data-id="${c.id}">
-      <div class="meta">
-        ${c.author_cloaked && !c.force_uncloaked ? '<em>anonymous</em>' : (c.author_username || 'unknown')}
-        &bull; ${formatTime(c.created_at)}
-        ${c.sentiment ? `&bull; <span class="badge">${c.sentiment}</span>` : ''}
-      </div>
-      <div class="comment-content markdown-content" data-raw="${escapeHtml(c.content).replace(/"/g, '&quot;')}">${escapeHtml(c.content)}</div>
-      <div class="comment-actions">
-        <button class="reply-btn" onclick="showReplyForm('${c.id}')">Reply</button>
+      <div style="display: flex; gap: 0.75rem;">
+        ${renderAvatar(c.author_cloaked && !c.force_uncloaked ? null : c.author_avatar, 28)}
+        <div style="flex: 1;">
+          <div class="meta">
+            ${c.author_cloaked && !c.force_uncloaked ? '<em>anonymous</em>' : (c.author_username || 'unknown')}
+            &bull; ${formatTime(c.created_at)}
+            ${c.sentiment ? `&bull; <span class="badge">${c.sentiment}</span>` : ''}
+          </div>
+          <div class="comment-content markdown-content" data-raw="${escapeHtml(c.content).replace(/"/g, '&quot;')}">${escapeHtml(c.content)}</div>
+          <div class="comment-actions">
+            <button class="reply-btn" onclick="showReplyForm('${c.id}')">Reply</button>
+          </div>
+        </div>
       </div>
       <div id="reply-form-${c.id}" class="reply-form-container" style="display: none;"></div>
     </div>
@@ -920,12 +1017,15 @@ export function postPage(post: any, comments: any[]): string {
         <h1 style="margin-bottom: 1rem;">${escapeHtml(post.title)}</h1>
         <button id="editPostBtn" class="btn btn-secondary" style="display: none; font-size: 0.875rem;" onclick="showEditPost()">Edit</button>
       </div>
-      <p class="meta" style="margin-bottom: 1rem;">
-        by ${post.author_cloaked ? '<em>anonymous</em>' : (post.author_username || 'unknown')}
-        &bull; ${formatTime(post.created_at)}
-        ${post.edited_at ? `&bull; <em>edited ${formatTime(post.edited_at)}</em>` : ''}
-        &bull; ${post.comment_count} comments
-      </p>
+      <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem;">
+        ${renderAvatar(post.author_cloaked ? null : post.author_avatar, 40)}
+        <p class="meta" style="margin: 0;">
+          by ${post.author_cloaked ? '<em>anonymous</em>' : (post.author_username || 'unknown')}
+          &bull; ${formatTime(post.created_at)}
+          ${post.edited_at ? `&bull; <em>edited ${formatTime(post.edited_at)}</em>` : ''}
+          &bull; ${post.comment_count} comments
+        </p>
+      </div>
       <div id="postContent" class="markdown-content" data-raw="${escapeHtml(post.content).replace(/"/g, '&quot;')}">${escapeHtml(post.content)}</div>
       <div id="editPostForm" style="display: none;">
         <textarea id="editPostContent" rows="6" style="width: 100%; margin-bottom: 1rem;">${escapeHtml(post.content)}</textarea>
@@ -1790,6 +1890,15 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function renderAvatar(avatarUrl: string | null | undefined, size: number): string {
+  const style = `width: ${size}px; height: ${size}px; border-radius: 50%; flex-shrink: 0;`;
+  if (avatarUrl) {
+    return `<img src="${escapeHtml(avatarUrl)}" alt="Avatar" style="${style} object-fit: cover; background: var(--bg-tertiary);">`;
+  }
+  // Default avatar - gray circle with user icon
+  return `<div style="${style} background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center; color: var(--text-secondary); font-size: ${Math.round(size * 0.5)}px;">👤</div>`;
 }
 
 function formatTime(timestamp: number): string {

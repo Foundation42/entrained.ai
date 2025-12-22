@@ -664,6 +664,9 @@ export function playgroundPage(recentSheets: SpriteSheetRow[]): string {
           </div>
 
           <div style="margin-top: 1rem;">
+            <button class="btn" style="width: 100%; margin-bottom: 0.5rem; background: var(--success);" onclick="useForAvatar()" id="useAvatarBtn">
+              Use This Avatar
+            </button>
             <input type="text" id="recipeName" placeholder="Recipe name (e.g., RoboCat)" style="margin-bottom: 0.5rem;">
             <div style="display: flex; gap: 0.5rem;">
               <button class="btn" style="flex: 1;" onclick="saveRecipe()" id="saveRecipeBtn">
@@ -857,8 +860,9 @@ export function playgroundPage(recentSheets: SpriteSheetRow[]): string {
     function initCompositor() {
       const compositorCard = document.getElementById('compositorCard');
 
-      // Only show compositor for avatar category sheets
-      if (!currentSheet || currentSheet.category !== 'avatar') {
+      // Show compositor for avatar and badge sheets
+      const compositorCategories = ['avatar', 'badges', 'badges_colorful'];
+      if (!currentSheet || !compositorCategories.includes(currentSheet.category)) {
         compositorCard.style.display = 'none';
         return;
       }
@@ -1111,6 +1115,264 @@ export function playgroundPage(recentSheets: SpriteSheetRow[]): string {
         btn.disabled = false;
       }
     }
+
+    // ================================
+    // EAP Intent Handling
+    // ================================
+
+    let currentIntent = null;
+
+    function parseIntent() {
+      const params = new URLSearchParams(window.location.search);
+      const intentJson = params.get('intent');
+      if (!intentJson) return null;
+
+      try {
+        return JSON.parse(decodeURIComponent(intentJson));
+      } catch {
+        return null;
+      }
+    }
+
+    function initIntentMode() {
+      currentIntent = parseIntent();
+      if (!currentIntent) return;
+
+      console.log('[EAP] Intent mode:', currentIntent);
+
+      // Normalize field names (support both formats)
+      const params = currentIntent.params || currentIntent.parameters || {};
+      const capability = currentIntent.capability || currentIntent.intent;
+      const source = currentIntent.caller?.app || currentIntent.source;
+      const returnTo = params.returnTo || currentIntent.returnTo;
+
+      // Auto-detect postMessage mode when opened as popup
+      const usePostMessage = !!window.opener;
+
+      // Store normalized values back
+      currentIntent.params = params;
+      currentIntent.capability = capability;
+      currentIntent.source = source;
+      currentIntent.returnTo = returnTo;
+      currentIntent.usePostMessage = usePostMessage;
+
+      // Pre-fill form based on intent parameters
+      if (params.theme) {
+        document.getElementById('theme').value = params.theme;
+      }
+      if (params.style) {
+        // Map style string to select option
+        const styleMap = {
+          'pixel_art': 'pixel_art',
+          'pixel-art': 'pixel_art',
+          'flat_vector': 'flat_vector',
+          'flat-vector': 'flat_vector',
+          'hand_drawn': 'hand_drawn',
+          'hand-drawn': 'hand_drawn',
+          'neon': 'neon',
+        };
+        const styleKey = styleMap[params.style] || 'flat_vector';
+        document.getElementById('style').value = styleKey;
+      }
+
+      // Force avatar category for avatar.create intent
+      if (capability === 'avatar.create') {
+        document.getElementById('category').value = 'avatar';
+      }
+
+      // Add intent mode banner
+      const container = document.querySelector('.container');
+      const banner = document.createElement('div');
+      banner.id = 'intentBanner';
+      banner.style.cssText = 'background: var(--accent); color: white; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;';
+      banner.innerHTML = \`
+        <div>
+          <strong>Avatar Selection Mode</strong>
+          <span style="opacity: 0.9; margin-left: 0.5rem;">Create or select an avatar, then click "Use This Avatar" to continue</span>
+        </div>
+        <button onclick="cancelIntent()" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Cancel</button>
+      \`;
+      container.insertBefore(banner, container.firstChild.nextSibling);
+
+      // Show avatar compositor section by default
+      document.getElementById('compositorCard').style.display = 'block';
+    }
+
+    function sendIntentResult(result) {
+      if (!currentIntent) return;
+
+      const response = {
+        type: 'eap:result',
+        capability: currentIntent.capability,
+        requestId: currentIntent.requestId,
+        status: 'success',
+        timestamp: new Date().toISOString(),
+        result
+      };
+
+      console.log('[EAP] Sending result:', response);
+
+      if (currentIntent.usePostMessage && window.opener) {
+        const targetOrigin = currentIntent.source ? \`https://\${currentIntent.source}\` : '*';
+        console.log('[EAP] postMessage to:', targetOrigin);
+        window.opener.postMessage(response, targetOrigin);
+        window.close();
+      } else if (currentIntent.returnTo) {
+        const url = \`\${currentIntent.returnTo}?result=\${encodeURIComponent(JSON.stringify(response))}\`;
+        window.location.href = url;
+      }
+    }
+
+    function cancelIntent() {
+      if (!currentIntent) return;
+
+      const response = {
+        type: 'eap:cancel',
+        capability: currentIntent.capability,
+        requestId: currentIntent.requestId,
+        status: 'cancelled',
+        timestamp: new Date().toISOString()
+      };
+
+      if (currentIntent.usePostMessage && window.opener) {
+        const targetOrigin = currentIntent.source ? \`https://\${currentIntent.source}\` : '*';
+        window.opener.postMessage(response, targetOrigin);
+        window.close();
+      } else if (currentIntent.returnTo) {
+        window.location.href = currentIntent.returnTo + '?cancelled=1';
+      }
+    }
+
+    async function useForAvatar() {
+      if (!currentSheet) {
+        alert('Please generate or select a sprite sheet first');
+        return;
+      }
+
+      // Get current recipe from compositor
+      const recipeJsonEl = document.getElementById('recipeJson');
+      let recipe = { layers: [] };
+
+      if (recipeJsonEl && recipeJsonEl.textContent) {
+        try {
+          recipe = JSON.parse(recipeJsonEl.textContent);
+        } catch {}
+      }
+
+      // Check if we have layers to composite
+      if (recipe.layers && recipe.layers.length > 0) {
+        // Render composite to canvas and upload
+        const btn = document.getElementById('useAvatarBtn');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Rendering...';
+        }
+
+        try {
+          const avatarUrl = await renderAndUploadAvatar(recipe.layers, currentSheet);
+
+          const result = {
+            avatarUrl,
+            recipe,
+            sheetId: currentSheet.id,
+            sheetUrl: currentSheet.url,
+            metadata: {
+              theme: currentSheet.theme,
+              category: currentSheet.category,
+            }
+          };
+
+          if (currentIntent) {
+            sendIntentResult(result);
+          } else {
+            console.log('Avatar result:', result);
+            alert('Avatar uploaded! URL: ' + avatarUrl);
+          }
+        } catch (err) {
+          console.error('Failed to render avatar:', err);
+          alert('Failed to render avatar: ' + err.message);
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Use This Avatar';
+          }
+        }
+      } else {
+        // No layers - just use sheet URL as fallback
+        const result = {
+          avatarUrl: currentSheet.url,
+          recipe,
+          sheetId: currentSheet.id,
+          sheetUrl: currentSheet.url,
+          metadata: {
+            theme: currentSheet.theme,
+            category: currentSheet.category,
+          }
+        };
+
+        if (currentIntent) {
+          sendIntentResult(result);
+        } else {
+          console.log('Avatar result:', result);
+          alert('No layers selected - using sheet image');
+        }
+      }
+    }
+
+    async function renderAndUploadAvatar(layers, sheet) {
+      const size = 256; // Output avatar size
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+
+      // Load sheet image
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = sheet.url;
+      });
+
+      const gridSize = sheet.grid_size;
+      const cellWidth = img.width / gridSize;
+      const cellHeight = img.height / gridSize;
+
+      // Draw each layer
+      for (const layer of layers) {
+        const col = layer.slot_index % gridSize;
+        const row = Math.floor(layer.slot_index / gridSize);
+
+        ctx.drawImage(
+          img,
+          col * cellWidth, row * cellHeight, cellWidth, cellHeight,  // source
+          0, 0, size, size  // destination
+        );
+      }
+
+      // Convert to data URL
+      const dataUrl = canvas.toDataURL('image/png');
+
+      // Upload to server
+      const response = await fetch('/api/avatars', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageData: dataUrl, sheetId: sheet.id })
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Upload failed');
+      }
+
+      const data = await response.json();
+      return data.data.url;
+    }
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      initIntentMode();
+    });
   </script>
 </body>
 </html>`;

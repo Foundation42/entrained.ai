@@ -30,6 +30,7 @@ export interface Profile {
   level: number;
   class: ClassType | null;
   cloak_quota: number;
+  avatar_url?: string;  // From sprites.entrained.ai via EAP
 }
 
 export interface ProfileRow {
@@ -44,6 +45,7 @@ export interface ProfileRow {
   level: number;
   class: string | null;
   cloak_quota: number;
+  avatar_url: string | null;
 }
 
 // Community types

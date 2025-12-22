@@ -1,0 +1,17 @@
+name = "api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Routes
+routes = [
+  { pattern = "api.entrained.ai", custom_domain = true }
+]
+
+# KV namespace for registry data
+[[kv_namespaces]]
+binding = "REGISTRY"
+id = "535cffbb7d6247808f6573c018c090b2"
+
+[vars]
+# Known apps in the ecosystem (bootstrap list)
+KNOWN_APPS = "sprites.entrained.ai,goodfaith.entrained.ai,patchwork.entrained.ai,auth.entrained.ai"

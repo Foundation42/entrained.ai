@@ -62,6 +62,32 @@ profiles.put('/me/username', async (c) => {
   return c.json({ data: { username: newUsername } });
 });
 
+// PUT /api/me/avatar - Update avatar URL (from sprites.entrained.ai)
+profiles.put('/me/avatar', async (c) => {
+  const profile = await getAuthProfile(c.req.raw, c.env);
+  if (!profile) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const body = await c.req.json<{ avatar_url: string }>();
+  const avatarUrl = body.avatar_url;
+
+  // Validate - must be from our sprites service
+  if (!avatarUrl || !avatarUrl.startsWith('https://sprites.entrained.ai/')) {
+    return c.json({
+      error: 'Avatar URL must be from sprites.entrained.ai'
+    }, 400);
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE profiles SET avatar_url = ? WHERE id = ?'
+  ).bind(avatarUrl, profile.id).run();
+
+  console.log(`[Avatar] Updated for ${profile.username}: ${avatarUrl}`);
+
+  return c.json({ data: { avatar_url: avatarUrl } });
+});
+
 // GET /api/u/:username - Get public profile
 profiles.get('/u/:username', async (c) => {
   const username = c.req.param('username');
@@ -148,6 +174,23 @@ profiles.get('/me/player-card', async (c) => {
     comment_count: number;
   }>();
 
+  // Get user badges
+  const badgesResult = await c.env.DB.prepare(`
+    SELECT b.id, b.name, b.description, b.image_url, b.category, ub.awarded_at
+    FROM user_badges ub
+    JOIN badges b ON ub.badge_id = b.id
+    WHERE ub.profile_id = ?
+    ORDER BY ub.awarded_at DESC
+  `).bind(profile.id).all<{
+    id: string;
+    name: string;
+    description: string | null;
+    image_url: string;
+    category: string;
+    awarded_at: number;
+  }>();
+  const userBadges = badgesResult.results;
+
   // Generate AI analysis
   const prompt = `You are a witty game master describing a player's character sheet for a discourse platform (like Reddit but with AI-evaluated good faith).
 
@@ -219,12 +262,14 @@ IMPORTANT: Keep it to exactly 2 SHORT sentences. Be warm, witty, and playful - l
           stats: profile.stats,
           cloak_quota: profile.cloak_quota,
           created_at: profile.created_at,
+          avatar_url: profile.avatar_url,
         },
         analysis,
         activity: {
           posts: counts?.post_count || 0,
           comments: counts?.comment_count || 0,
-        }
+        },
+        badges: userBadges,
       }
     });
   } catch (err) {
@@ -238,12 +283,14 @@ IMPORTANT: Keep it to exactly 2 SHORT sentences. Be warm, witty, and playful - l
           stats: profile.stats,
           cloak_quota: profile.cloak_quota,
           created_at: profile.created_at,
+          avatar_url: profile.avatar_url,
         },
         analysis: "You're forging your path in the realm of discourse. Every comment shapes your legend. Keep engaging in good faith and watch your character grow!",
         activity: {
           posts: counts?.post_count || 0,
           comments: counts?.comment_count || 0,
-        }
+        },
+        badges: userBadges,
       }
     });
   }

@@ -6,6 +6,7 @@ import communities from './routes/communities';
 import posts from './routes/posts';
 import comments from './routes/comments';
 import profiles from './routes/profiles';
+import badges from './routes/badges';
 import { landingPage, communityPage, postPage, aboutPage, howItWorksPage, createCommunityPage, createPostPage } from './pages/public';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -36,6 +37,7 @@ app.route('/api/communities', communities);
 app.route('/api/c/:community/posts', posts);
 app.route('/api/c/:community/posts/:postId/comments', comments);
 app.route('/api', profiles);
+app.route('/api/badges', badges);
 
 // Evaluate endpoint (pre-submit check)
 app.post('/api/evaluate', async (c) => {
@@ -144,7 +146,7 @@ app.get('/c/:name', async (c) => {
   }
 
   const posts = await DB.prepare(`
-    SELECT p.*, pr.username as author_username
+    SELECT p.*, pr.username as author_username, pr.avatar_url as author_avatar
     FROM posts p
     LEFT JOIN profiles pr ON p.author_id = pr.id
     WHERE p.community_id = ?
@@ -161,7 +163,7 @@ app.get('/c/:community/p/:postId', async (c) => {
   const { DB } = c.env;
 
   const post = await DB.prepare(`
-    SELECT p.*, pr.username as author_username, c.name as community_name, c.display_name as community_display_name
+    SELECT p.*, pr.username as author_username, pr.avatar_url as author_avatar, c.name as community_name, c.display_name as community_display_name
     FROM posts p
     LEFT JOIN profiles pr ON p.author_id = pr.id
     JOIN communities c ON p.community_id = c.id
@@ -173,7 +175,7 @@ app.get('/c/:community/p/:postId', async (c) => {
   }
 
   const comments = await DB.prepare(`
-    SELECT cm.*, pr.username as author_username
+    SELECT cm.*, pr.username as author_username, pr.avatar_url as author_avatar
     FROM comments cm
     LEFT JOIN profiles pr ON cm.author_id = pr.id
     WHERE cm.post_id = ?
@@ -191,5 +193,89 @@ app.get('/how-it-works', (c) => c.html(howItWorksPage()));
 
 // Create community page
 app.get('/communities/new', (c) => c.html(createCommunityPage()));
+
+// ================================
+// EAP Manifest
+// ================================
+
+app.get('/manifest.json', (c) => {
+  const manifest = {
+    app: 'goodfaith.entrained.ai',
+    version: '1.0.0',
+    name: 'GoodFaith',
+    description: 'AI-moderated community platform for constructive discourse',
+
+    capabilities: [
+      {
+        id: 'community.join',
+        name: 'Join Community',
+        description: 'Join a GoodFaith community',
+        endpoint: '/c',
+        method: 'GET',
+        parameters: {
+          community: { type: 'string', optional: true, description: 'Community name to join' },
+          returnTo: { type: 'url', optional: true, description: 'URL to return to after joining' },
+        },
+      },
+      {
+        id: 'post.create',
+        name: 'Create Post',
+        description: 'Create a new post in a community',
+        endpoint: '/c/:community/new',
+        method: 'GET',
+        parameters: {
+          community: { type: 'string', required: true, description: 'Community name' },
+          title: { type: 'string', optional: true, description: 'Pre-fill post title' },
+          returnTo: { type: 'url', optional: true, description: 'URL to return to after posting' },
+        },
+        returns: {
+          type: 'object',
+          schema: {
+            postId: 'string',
+            postUrl: 'string',
+          },
+        },
+      },
+      {
+        id: 'profile.view',
+        name: 'View Profile',
+        description: 'View a user profile',
+        endpoint: '/u/:username',
+        method: 'GET',
+        parameters: {
+          username: { type: 'string', required: true, description: 'Username to view' },
+        },
+      },
+    ],
+
+    permissions: ['auth.read', 'engram.read', 'engram.write'],
+
+    introspection: {
+      health: '/health',
+    },
+
+    ai: {
+      apiEndpoint: '/api',
+      instructions: {
+        summary: 'GoodFaith is an AI-moderated community platform that encourages constructive discourse',
+        capabilities: [
+          'Create and join communities',
+          'Post content with AI-assisted quality feedback',
+          'Comment on posts with real-time constructive feedback',
+          'Build reputation through positive contributions',
+        ],
+        bestPractices: [
+          'Content is evaluated for constructiveness before posting',
+          'Users receive feedback to improve their contributions',
+          'Communities have customizable moderation guidelines',
+        ],
+      },
+    },
+  };
+
+  return c.json(manifest, 200, {
+    'Cache-Control': 'public, max-age=300',
+  });
+});
 
 export default app;
