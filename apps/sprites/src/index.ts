@@ -65,8 +65,14 @@ app.post('/api/generate', async (c) => {
 
     // Upload to R2
     const sheetId = nanoid();
-    // Sanitize theme for URL-safe R2 key
-    const safeTheme = body.theme.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    // Sanitize theme for URL-safe R2 key (handle emoji and unicode)
+    const safeTheme = body.theme
+      .normalize('NFKD')                          // Decompose unicode
+      .replace(/[\u0300-\u036f]/g, '')            // Remove diacritics
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')                // Keep only alphanumeric
+      .replace(/^-+|-+$/g, '')                    // Trim leading/trailing hyphens
+      || 'untitled';                              // Fallback if empty
     const r2Key = `sheets/${category}/${safeTheme}/${sheetId}.png`;
 
     await uploadToR2(c.env.ASSETS, r2Key, imageData, mimeType);
