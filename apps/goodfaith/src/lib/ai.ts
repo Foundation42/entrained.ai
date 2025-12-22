@@ -224,6 +224,51 @@ export function calculateStatImpact(
   };
 }
 
+// Generate URL slug from community name/description
+export async function generateCommunitySlug(
+  displayName: string,
+  description: string | undefined,
+  env: Env
+): Promise<string> {
+  const prompt = `Generate a URL-friendly slug for this community:
+
+DISPLAY NAME: "${displayName}"
+DESCRIPTION: "${description || '(none)'}"
+
+Requirements:
+- 3-50 characters
+- Only lowercase letters, numbers, and hyphens
+- No leading/trailing hyphens
+- Should be memorable and relevant to the community topic
+- Prefer shorter slugs when possible (under 25 chars ideal)
+
+Return ONLY the slug, nothing else. Example outputs:
+- "ai-research"
+- "book-club"
+- "python-beginners"
+- "cooking-tips"`;
+
+  try {
+    const rawResult = await callGemini(prompt, env.GEMINI_API_KEY, env.AI_MODEL);
+    // Clean up the result - remove quotes, whitespace, ensure valid format
+    let slug = rawResult.trim().toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '');
+
+    // Ensure length constraints
+    if (slug.length < 3) {
+      slug = displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+    }
+    if (slug.length > 50) {
+      slug = slug.slice(0, 50).replace(/-+$/, '');
+    }
+
+    return slug || 'community';
+  } catch (e) {
+    // Fallback: generate from display name directly
+    console.error('[SlugGen] AI failed, using fallback:', e);
+    return displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'community';
+  }
+}
+
 // Community creation moderation check
 export async function evaluateCommunityCreation(
   name: string,

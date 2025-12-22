@@ -1550,24 +1550,25 @@ export function createCommunityPage(): string {
         <div id="error" class="error" style="display: none;"></div>
 
         <div class="form-group">
-          <label for="name">URL Name</label>
-          <input type="text" id="name" name="name" placeholder="e.g., ai-research" required pattern="[a-z0-9-]{3,50}">
-          <p class="hint">3-50 lowercase letters, numbers, or hyphens. This will be in the URL.</p>
-        </div>
-
-        <div class="form-group">
-          <label for="display_name">Display Name</label>
-          <input type="text" id="display_name" name="display_name" placeholder="e.g., AI Research Discussion" required>
+          <label for="display_name">Community Name</label>
+          <input type="text" id="display_name" name="display_name" placeholder="e.g., AI Research Discussion" required minlength="3" maxlength="100">
+          <p class="hint"><span id="name-count">0</span>/100 characters</p>
         </div>
 
         <div class="form-group">
           <label for="description">Description</label>
-          <textarea id="description" name="description" rows="3" placeholder="What is this community about?"></textarea>
+          <textarea id="description" name="description" rows="3" placeholder="What is this community about?" maxlength="500"></textarea>
+          <p class="hint"><span id="desc-count">0</span>/500 characters</p>
         </div>
 
         <details style="margin-bottom: 1rem;">
           <summary style="cursor: pointer; color: var(--text-secondary);">Advanced Options</summary>
           <div style="margin-top: 1rem;">
+            <div class="form-group">
+              <label for="name">Custom URL (optional)</label>
+              <input type="text" id="name" name="name" placeholder="Leave blank to auto-generate" pattern="[a-z0-9-]{3,50}">
+              <p class="hint">3-50 lowercase letters, numbers, or hyphens. AI will generate one if left blank.</p>
+            </div>
             <div class="form-group">
               <label for="min_level">Minimum Level to Post</label>
               <input type="number" id="min_level" name="min_level" min="1" max="10" placeholder="Leave empty for no restriction">
@@ -1640,6 +1641,19 @@ export function createCommunityPage(): string {
 
         form.style.display = 'block';
 
+        // Character counters
+        const nameInput = document.getElementById('display_name');
+        const descInput = document.getElementById('description');
+        const nameCount = document.getElementById('name-count');
+        const descCount = document.getElementById('desc-count');
+
+        nameInput.addEventListener('input', function() {
+          nameCount.textContent = this.value.length;
+        });
+        descInput.addEventListener('input', function() {
+          descCount.textContent = this.value.length;
+        });
+
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const btn = form.querySelector('button');
@@ -1657,7 +1671,7 @@ export function createCommunityPage(): string {
                 'Authorization': 'Bearer ' + token
               },
               body: JSON.stringify({
-                name: form.name.value.toLowerCase(),
+                name: form.name.value ? form.name.value.toLowerCase() : undefined,
                 display_name: form.display_name.value,
                 description: form.description.value || undefined,
                 min_level_to_post: form.min_level.value ? parseInt(form.min_level.value) : undefined,

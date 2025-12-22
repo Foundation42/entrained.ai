@@ -4,7 +4,7 @@ import { nanoid } from 'nanoid';
 import type { Env, CommunityRow, EvaluationConfig } from '../types';
 import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
 import { rowToCommunity } from '../lib/db';
-import { evaluateCommunityCreation } from '../lib/ai';
+import { evaluateCommunityCreation, generateCommunitySlug } from '../lib/ai';
 
 const communities = new Hono<{ Bindings: Env }>();
 
@@ -58,7 +58,7 @@ communities.post('/', async (c) => {
 
   // Parse body
   const body = await c.req.json<{
-    name: string;
+    name?: string;  // Now optional - will be AI-generated if not provided
     display_name: string;
     description?: string;
     evaluation_config?: Partial<EvaluationConfig>;
@@ -67,28 +67,60 @@ communities.post('/', async (c) => {
     require_sources_for_claims?: boolean;
   }>();
 
-  const { name, display_name, description } = body;
+  const { display_name, description } = body;
 
-  // Validate
-  if (!name || !display_name) {
-    return c.json({ error: 'Name and display_name required' }, 400);
+  // Validate display_name
+  if (!display_name) {
+    return c.json({ error: 'Display name is required' }, 400);
+  }
+  if (display_name.length < 3 || display_name.length > 100) {
+    return c.json({ error: 'Display name must be 3-100 characters' }, 400);
   }
 
-  // Name must be URL-safe
-  if (!/^[a-z0-9-]{3,50}$/.test(name)) {
-    return c.json({
-      error: 'Name must be 3-50 lowercase letters, numbers, or hyphens'
-    }, 400);
+  // Validate description length
+  if (description && description.length > 500) {
+    return c.json({ error: 'Description must be 500 characters or less' }, 400);
   }
 
-  // Check if name is taken
-  const existing = await c.env.DB.prepare(
-    'SELECT id FROM communities WHERE name = ?'
-  ).bind(name.toLowerCase()).first();
-
-  if (existing) {
-    return c.json({ error: 'Community name already taken' }, 409);
+  // Generate or validate URL slug
+  let name: string;
+  if (body.name) {
+    // User provided a custom slug
+    name = body.name.toLowerCase();
+    if (!/^[a-z0-9-]{3,50}$/.test(name)) {
+      return c.json({
+        error: 'URL name must be 3-50 lowercase letters, numbers, or hyphens'
+      }, 400);
+    }
+  } else {
+    // AI generates the slug
+    name = await generateCommunitySlug(display_name, description, c.env);
+    console.log(`[Community] AI generated slug: ${name}`);
   }
+
+  // Check if name is taken, append number if needed
+  let finalName = name;
+  let suffix = 1;
+  while (true) {
+    const existing = await c.env.DB.prepare(
+      'SELECT id FROM communities WHERE name = ?'
+    ).bind(finalName).first();
+
+    if (!existing) break;
+
+    // If user provided the name and it's taken, error out
+    if (body.name) {
+      return c.json({ error: 'Community name already taken' }, 409);
+    }
+
+    // For AI-generated names, append a number
+    suffix++;
+    finalName = `${name}-${suffix}`;
+    if (finalName.length > 50) {
+      finalName = `${name.slice(0, 47)}-${suffix}`;
+    }
+  }
+  name = finalName;
 
   // AI moderation check - keep the platform family-friendly
   const moderation = await evaluateCommunityCreation(
