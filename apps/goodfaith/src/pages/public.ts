@@ -324,11 +324,15 @@ function layout(title: string, content: string): string {
     main { padding: 2rem 0; }
 
     .card {
+      display: block;
       background: var(--bg-secondary);
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 1.5rem;
       margin-bottom: 1rem;
+    }
+    .card:hover {
+      border-color: var(--accent);
     }
 
     .card h3 { margin-bottom: 0.5rem; }
