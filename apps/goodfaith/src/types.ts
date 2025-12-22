@@ -4,11 +4,13 @@
 export interface Env {
   DB: D1Database;
   KV: KVNamespace;
+  ASSETS: R2Bucket;  // Shared with sprites for community images
   ENVIRONMENT: string;
   DOMAIN: string;
   PARENT_SITE: string;
   AI_MODEL: string;
   GEMINI_API_KEY: string;
+  GEMINI_IMAGE_MODEL?: string;  // For image generation
 }
 
 // Profile types (linked to auth.entrained.ai users)
@@ -77,6 +79,7 @@ export interface Community {
   require_sources_for_claims: boolean;
   member_count: number;
   post_count: number;
+  image_url?: string;  // AI-generated community image
 }
 
 export interface CommunityRow {
@@ -92,6 +95,7 @@ export interface CommunityRow {
   require_sources_for_claims: number;
   member_count: number;
   post_count: number;
+  image_url: string | null;
 }
 
 // Post types

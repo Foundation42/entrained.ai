@@ -19,9 +19,15 @@ database_id = "07f0758b-f578-4001-8035-df7c64c5d7c8"
 binding = "KV"
 id = "25534207e9e343fbaac70e815e4b2a41"
 
+# R2 for community images (shared with sprites)
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "sprites-assets"
+
 # Environment variables (secrets set via wrangler secret)
 [vars]
 ENVIRONMENT = "production"
 DOMAIN = "goodfaith.entrained.ai"
 PARENT_SITE = "https://entrained.ai"
 AI_MODEL = "gemini-3-flash-preview"
+GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"

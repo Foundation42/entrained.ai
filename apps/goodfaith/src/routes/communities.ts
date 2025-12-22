@@ -4,7 +4,7 @@ import { nanoid } from 'nanoid';
 import type { Env, CommunityRow, EvaluationConfig } from '../types';
 import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
 import { rowToCommunity } from '../lib/db';
-import { evaluateCommunityCreation, generateCommunitySlug } from '../lib/ai';
+import { evaluateCommunityCreation, generateCommunitySlug, generateCommunityImage } from '../lib/ai';
 
 const communities = new Hono<{ Bindings: Env }>();
 
@@ -261,6 +261,69 @@ communities.post('/:name/leave', async (c) => {
   ).bind(community.id).run();
 
   return c.json({ data: { left: true } });
+});
+
+// POST /api/communities/:name/generate-image - Generate AI image for community (owner only)
+communities.post('/:name/generate-image', async (c) => {
+  const profile = await getAuthProfile(c.req.raw, c.env);
+  if (!profile) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const name = c.req.param('name');
+  const community = await c.env.DB.prepare(
+    'SELECT * FROM communities WHERE name = ?'
+  ).bind(name.toLowerCase()).first<CommunityRow>();
+
+  if (!community) {
+    return c.json({ error: 'Community not found' }, 404);
+  }
+
+  // Only the owner can generate/refresh the image
+  if (community.created_by !== profile.id) {
+    return c.json({ error: 'Only the community owner can generate images' }, 403);
+  }
+
+  try {
+    console.log(`[CommunityImage] Generating for ${community.display_name}`);
+
+    // Generate the image
+    const { imageData, mimeType } = await generateCommunityImage(
+      community.display_name,
+      community.description || undefined,
+      c.env
+    );
+
+    // Upload to R2
+    const imageId = nanoid();
+    const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+    const r2Key = `communities/${community.name}/${imageId}.${ext}`;
+
+    await c.env.ASSETS.put(r2Key, imageData, {
+      httpMetadata: { contentType: mimeType },
+    });
+
+    // Build public URL (same domain as sprites assets)
+    const imageUrl = `https://sprites.entrained.ai/assets/${r2Key}`;
+
+    // Update database
+    await c.env.DB.prepare(
+      'UPDATE communities SET image_url = ? WHERE id = ?'
+    ).bind(imageUrl, community.id).run();
+
+    console.log(`[CommunityImage] Saved: ${imageUrl}`);
+
+    return c.json({
+      data: {
+        image_url: imageUrl,
+      }
+    });
+  } catch (err) {
+    console.error('[CommunityImage] Error:', err);
+    return c.json({
+      error: err instanceof Error ? err.message : 'Failed to generate image'
+    }, 500);
+  }
 });
 
 export default communities;

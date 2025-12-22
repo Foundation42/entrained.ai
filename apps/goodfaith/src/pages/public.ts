@@ -969,11 +969,23 @@ export function communityPage(community: any, posts: any[]): string {
       </ul>`
     : '<p class="meta">No posts yet. Start a discussion!</p>';
 
+  const communityImage = community.image_url
+    ? `<img src="${escapeHtml(community.image_url)}" alt="${escapeHtml(community.display_name)}" style="width: 80px; height: 80px; border-radius: 12px; object-fit: cover;">`
+    : `<div style="width: 80px; height: 80px; border-radius: 12px; background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center; font-size: 2rem;">🏠</div>`;
+
   return layout(community.display_name, `
     <div class="card">
-      <h1>${community.display_name}</h1>
-      <p style="margin: 1rem 0;">${escapeHtml(community.description || '')}</p>
-      <div class="stats-bar">
+      <div style="display: flex; gap: 1.25rem; align-items: flex-start;">
+        <div id="community-image" style="position: relative;">
+          ${communityImage}
+          <button id="generate-image-btn" style="display: none; position: absolute; bottom: -8px; right: -8px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg-secondary); color: white; cursor: pointer; font-size: 0.875rem;" title="Generate AI image">✨</button>
+        </div>
+        <div style="flex: 1;">
+          <h1 style="margin-bottom: 0.5rem;">${escapeHtml(community.display_name)}</h1>
+          <p style="margin: 0; color: var(--text-secondary);">${escapeHtml(community.description || '')}</p>
+        </div>
+      </div>
+      <div class="stats-bar" style="margin-top: 1rem;">
         <div class="stat">
           <span class="stat-value">${community.member_count}</span>
           <span class="stat-label">members</span>
@@ -985,6 +997,57 @@ export function communityPage(community: any, posts: any[]): string {
       </div>
       ${community.min_level_to_post ? `<p class="meta">Level ${community.min_level_to_post}+ required to post</p>` : ''}
     </div>
+
+    <script>
+      (function() {
+        const token = localStorage.getItem('auth_token');
+        if (!token) return;
+
+        // Check if current user is the owner
+        fetch('/api/me', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        })
+        .then(res => res.json())
+        .then(data => {
+          if (data.data?.profile?.id === '${community.created_by}') {
+            const btn = document.getElementById('generate-image-btn');
+            btn.style.display = 'flex';
+            btn.style.alignItems = 'center';
+            btn.style.justifyContent = 'center';
+
+            btn.addEventListener('click', async () => {
+              btn.disabled = true;
+              btn.textContent = '⏳';
+
+              try {
+                const res = await fetch('/api/communities/${community.name}/generate-image', {
+                  method: 'POST',
+                  headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const result = await res.json();
+
+                if (result.data?.image_url) {
+                  // Update the image
+                  const imgContainer = document.getElementById('community-image');
+                  imgContainer.innerHTML = \`<img src="\${result.data.image_url}" alt="${escapeHtml(community.display_name)}" style="width: 80px; height: 80px; border-radius: 12px; object-fit: cover;">
+                    <button id="generate-image-btn" style="position: absolute; bottom: -8px; right: -8px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg-secondary); color: white; cursor: pointer; font-size: 0.875rem; display: flex; align-items: center; justify-content: center;" title="Regenerate">🔄</button>\`;
+                  // Re-attach listener
+                  location.reload();
+                } else {
+                  alert(result.error || 'Failed to generate image');
+                  btn.textContent = '✨';
+                  btn.disabled = false;
+                }
+              } catch (err) {
+                alert('Error: ' + err.message);
+                btn.textContent = '✨';
+                btn.disabled = false;
+              }
+            });
+          }
+        });
+      })();
+    </script>
 
     <div style="display: flex; justify-content: space-between; align-items: center; margin: 2rem 0 1rem;">
       <h2>Posts</h2>

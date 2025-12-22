@@ -29,6 +29,7 @@ export function rowToCommunity(row: CommunityRow): Community {
     require_sources_for_claims: row.require_sources_for_claims === 1,
     member_count: row.member_count,
     post_count: row.post_count,
+    image_url: row.image_url ?? undefined,
   };
 }
 

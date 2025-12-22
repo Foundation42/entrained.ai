@@ -3,6 +3,7 @@ import type { ContentEvaluation, EvaluationFlag, ProfileStats, Env } from '../ty
 import { nanoid } from 'nanoid';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
+const IMAGE_MODEL = 'gemini-2.5-flash-image';  // Model that supports image generation
 
 interface EvaluationContext {
   parentContent?: string;
@@ -358,5 +359,147 @@ export async function preSubmitCheck(
     warnings: criticalFlags,
     suggestions: evaluation.suggestions,
     predictedImpact: impact
+  };
+}
+
+// Generate community image using Gemini
+export async function generateCommunityImage(
+  displayName: string,
+  description: string | undefined,
+  env: Env
+): Promise<{ imageData: ArrayBuffer; mimeType: string }> {
+  const model = env.GEMINI_IMAGE_MODEL || IMAGE_MODEL;
+  const url = `${GEMINI_API_BASE}/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
+
+  const prompt = `Create a simple, iconic logo/emblem for a community called "${displayName}".
+${description ? `The community is about: ${description}` : ''}
+
+Requirements:
+- Create a single centered icon or emblem (256x256 pixels)
+- Use a minimalist, clean design style
+- The background MUST be pure black (#000000) - this is critical for transparency
+- Use vibrant colors for the icon itself
+- No text or letters in the image
+- Simple shapes, easily recognizable
+- Style: flat vector, modern, clean lines`;
+
+  console.log(`[CommunityImage] Generating image for: ${displayName}`);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseModalities: ['IMAGE'],
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error(`[CommunityImage] API error: ${response.status} - ${errText}`);
+    throw new Error(`Image generation failed: ${response.status}`);
+  }
+
+  const data = await response.json() as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: { mimeType: string; data: string };
+        }>;
+      };
+    }>;
+  };
+
+  const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+  if (!imagePart?.inlineData) {
+    throw new Error('No image in response');
+  }
+
+  // Decode base64
+  const base64 = imagePart.inlineData.data;
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  console.log(`[CommunityImage] Generated: ${bytes.length} bytes`);
+
+  // Now generate a mask for transparency
+  const maskResult = await generateImageMask(bytes.buffer, imagePart.inlineData.mimeType, env);
+
+  // Simple alpha merge: where mask is white = opaque, black = transparent
+  // For now, return the original image - we can enhance with proper PNG alpha later
+  return {
+    imageData: bytes.buffer,
+    mimeType: imagePart.inlineData.mimeType,
+  };
+}
+
+// Generate alpha mask from image
+async function generateImageMask(
+  imageData: ArrayBuffer,
+  mimeType: string,
+  env: Env
+): Promise<{ imageData: ArrayBuffer; mimeType: string }> {
+  const model = env.GEMINI_IMAGE_MODEL || IMAGE_MODEL;
+  const url = `${GEMINI_API_BASE}/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
+
+  const bytes = new Uint8Array(imageData);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const imageBase64 = btoa(binary);
+
+  const maskPrompt = `Create a transparency mask for this icon. The icon/logo should be white (opaque). The black background should remain black (transparent). Output a grayscale mask image.`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { inlineData: { mimeType, data: imageBase64 } },
+          { text: maskPrompt },
+        ],
+      }],
+      generationConfig: {
+        responseModalities: ['IMAGE'],
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Mask generation failed: ${response.status}`);
+  }
+
+  const data = await response.json() as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: { mimeType: string; data: string };
+        }>;
+      };
+    }>;
+  };
+
+  const maskPart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+  if (!maskPart?.inlineData) {
+    throw new Error('No mask in response');
+  }
+
+  const maskBase64 = maskPart.inlineData.data;
+  const maskBinary = atob(maskBase64);
+  const maskBytes = new Uint8Array(maskBinary.length);
+  for (let i = 0; i < maskBinary.length; i++) {
+    maskBytes[i] = maskBinary.charCodeAt(i);
+  }
+
+  return {
+    imageData: maskBytes.buffer,
+    mimeType: maskPart.inlineData.mimeType,
   };
 }
