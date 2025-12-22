@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import type { Env, CommunityRow, EvaluationConfig } from '../types';
 import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
 import { rowToCommunity } from '../lib/db';
+import { evaluateCommunityCreation } from '../lib/ai';
 
 const communities = new Hono<{ Bindings: Env }>();
 
@@ -88,6 +89,25 @@ communities.post('/', async (c) => {
   if (existing) {
     return c.json({ error: 'Community name already taken' }, 409);
   }
+
+  // AI moderation check - keep the platform family-friendly
+  const moderation = await evaluateCommunityCreation(
+    name,
+    display_name,
+    description,
+    c.env
+  );
+
+  if (!moderation.approved) {
+    console.log(`[Community] Rejected: ${name} - ${moderation.reason}`);
+    return c.json({
+      error: 'Community creation not approved',
+      reason: moderation.reason,
+      suggestions: moderation.suggestions
+    }, 400);
+  }
+
+  console.log(`[Community] Approved: ${name}`);
 
   // Build evaluation config
   const evalConfig: EvaluationConfig = {

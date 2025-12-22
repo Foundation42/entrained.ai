@@ -224,6 +224,67 @@ export function calculateStatImpact(
   };
 }
 
+// Community creation moderation check
+export async function evaluateCommunityCreation(
+  name: string,
+  displayName: string,
+  description: string | undefined,
+  env: Env
+): Promise<{
+  approved: boolean;
+  reason?: string;
+  suggestions?: string[];
+}> {
+  const prompt = `You are a content moderator for a family-friendly discussion platform.
+
+Evaluate this community creation request:
+
+COMMUNITY NAME (URL slug): "${name}"
+DISPLAY NAME: "${displayName}"
+DESCRIPTION: "${description || '(no description provided)'}"
+
+Check for:
+1. Profanity, slurs, or offensive language (including disguised/leetspeak versions)
+2. Sexual or adult content references
+3. Hate speech or discrimination
+4. Violence or harmful content promotion
+5. Spam or scam indicators
+6. Impersonation of official entities
+
+Return JSON in this exact format:
+{
+  "approved": true/false,
+  "reason": "<if rejected, explain why briefly>",
+  "suggestions": ["<if rejected, suggest how to fix>"]
+}
+
+Be strict about keeping the platform family-friendly, but don't reject legitimate communities.
+Examples that should be APPROVED: "gardening-club", "Learn Python", "Book Lovers"
+Examples that should be REJECTED: anything with profanity, slurs, sexual references, hate speech`;
+
+  const rawResult = await callGemini(prompt, env.GEMINI_API_KEY, env.AI_MODEL);
+
+  try {
+    const parsed = JSON.parse(rawResult) as {
+      approved: boolean;
+      reason?: string;
+      suggestions?: string[];
+    };
+    return {
+      approved: parsed.approved ?? false,
+      reason: parsed.reason,
+      suggestions: parsed.suggestions
+    };
+  } catch (e) {
+    // If parsing fails, reject to be safe
+    console.error('[CommunityModeration] Failed to parse AI response:', e);
+    return {
+      approved: false,
+      reason: 'Unable to verify content safety. Please try again.',
+    };
+  }
+}
+
 // Pre-submit check (evaluate before posting)
 export async function preSubmitCheck(
   content: string,

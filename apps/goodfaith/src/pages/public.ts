@@ -1636,7 +1636,7 @@ export function createCommunityPage(): string {
           const errorDiv = document.getElementById('error');
 
           btn.disabled = true;
-          btn.textContent = 'Creating...';
+          btn.textContent = 'Checking & Creating...';
           errorDiv.style.display = 'none';
 
           try {
@@ -1658,7 +1658,23 @@ export function createCommunityPage(): string {
             const data = await res.json();
 
             if (!res.ok) {
-              throw new Error(data.error || 'Failed to create community');
+              // Build detailed error message for moderation rejections
+              let errorHtml = '<strong>' + (data.error || 'Failed to create community') + '</strong>';
+              if (data.reason) {
+                errorHtml += '<br><br>' + data.reason;
+              }
+              if (data.suggestions && data.suggestions.length > 0) {
+                errorHtml += '<br><br><strong>Suggestions:</strong><ul style="margin: 0.5rem 0 0 1.5rem;">';
+                data.suggestions.forEach(function(s) {
+                  errorHtml += '<li>' + s + '</li>';
+                });
+                errorHtml += '</ul>';
+              }
+              errorDiv.innerHTML = errorHtml;
+              errorDiv.style.display = 'block';
+              btn.disabled = false;
+              btn.textContent = 'Create Community';
+              return;
             }
 
             // Redirect to new community
