@@ -915,11 +915,21 @@ export function landingPage(communities: any[], recentPosts: any[]): string {
         GoodFaith is a discussion platform where AI evaluates discourse quality instead of counting votes.
         Engage in good faith, and unlock new abilities.
       </p>
-      <div style="margin-top: 2rem;">
-        <a href="https://auth.entrained.ai" class="btn" style="font-size: 1.125rem; padding: 0.75rem 1.5rem;">Get Started</a>
+      <div id="cta-buttons" style="margin-top: 2rem;">
+        <a href="https://auth.entrained.ai?return_to=https://goodfaith.entrained.ai" class="btn" id="get-started-btn" style="font-size: 1.125rem; padding: 0.75rem 1.5rem;">Get Started</a>
         <a href="/how-it-works" class="btn btn-secondary" style="font-size: 1.125rem; padding: 0.75rem 1.5rem; margin-left: 1rem;">Learn More</a>
       </div>
     </div>
+
+    <script>
+      (function() {
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+          const btn = document.getElementById('get-started-btn');
+          if (btn) btn.style.display = 'none';
+        }
+      })();
+    </script>
 
     <div class="grid" style="margin-top: 3rem;">
       <div>
