@@ -1,0 +1,23 @@
+{
+  "name": "@entrained/sprites",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir=dist",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "wrangler d1 execute sprites-db --local --file=./migrations/001_init.sql",
+    "db:migrate:prod": "wrangler d1 execute sprites-db --file=./migrations/001_init.sql"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "nanoid": "^5.0.9"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^4.56.0"
+  }
+}
