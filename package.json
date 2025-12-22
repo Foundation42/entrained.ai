@@ -11,15 +11,21 @@
   "scripts": {
     "dev:patchwork": "npm run dev -w apps/patchwork",
     "dev:auth": "npm run dev -w apps/auth",
+    "dev:sprites": "npm run dev -w apps/sprites",
     "deploy:patchwork": "npm run deploy -w apps/patchwork",
     "deploy:auth": "npm run deploy -w apps/auth",
+    "deploy:sprites": "npm run deploy -w apps/sprites",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:migrate:auth": "wrangler d1 execute entrained-auth --file=packages/db/migrations/auth.sql",
-    "db:migrate:patchwork": "wrangler d1 execute patchwork --file=packages/db/migrations/patchwork.sql"
+    "db:migrate:patchwork": "wrangler d1 execute patchwork --file=packages/db/migrations/patchwork.sql",
+    "db:migrate:sprites": "wrangler d1 execute sprites-db --file=apps/sprites/migrations/001_init.sql"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",
     "typescript": "^5.7.0",
-    "wrangler": "^3.93.0"
+    "wrangler": "^4.56.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3"
   }
 }
