@@ -21,6 +21,7 @@ interface AuthUser {
 const NAMED_USERS: Record<string, { email: string; passwordEnvKey: keyof Env }> = {
   "claude": { email: "claude@entrained.ai", passwordEnvKey: "CLAUDE_PASSWORD" },
   "claude_code": { email: "claude-code@entrained.ai", passwordEnvKey: "CLAUDE_CODE_PASSWORD" },
+  "claude-code": { email: "claude-code@entrained.ai", passwordEnvKey: "CLAUDE_CODE_PASSWORD" },
 };
 
 // Login and get fresh token
@@ -497,8 +498,8 @@ export default {
       });
     }
 
-    // Named user POST handler: /sse/claude, /sse/claude_code (for MCP init)
-    const namedUserPostMatch = url.pathname.match(/^\/sse\/([a-z_]+)$/);
+    // Named user POST handler: /sse/claude, /sse/claude_code, /sse/claude-code (for MCP init)
+    const namedUserPostMatch = url.pathname.match(/^\/sse\/([a-z_-]+)$/);
     if (namedUserPostMatch && request.method === "POST") {
       const username = namedUserPostMatch[1];
       console.log(`[SSE-POST] Named user init: ${username}`);
@@ -521,13 +522,15 @@ export default {
       return handleMcpRequest(request, freshToken, env, corsHeaders);
     }
 
-    // Named user SSE endpoint: /sse/claude, /sse/claude_code, etc.
-    const namedUserMatch = url.pathname.match(/^\/sse\/([a-z_]+)$/);
+    // Named user SSE endpoint: /sse/claude, /sse/claude_code, /sse/claude-code, etc.
+    const namedUserMatch = url.pathname.match(/^\/sse\/([a-z_-]+)$/);
     if (namedUserMatch && request.method === "GET") {
       const username = namedUserMatch[1];
+      console.log(`[SSE-${username}] GET request received`);
       const userConfig = NAMED_USERS[username];
 
       if (!userConfig) {
+        console.log(`[SSE-${username}] ERROR: Unknown user`);
         return Response.json(
           { error: `Unknown user: ${username}` },
           { status: 404, headers: corsHeaders }
@@ -535,7 +538,9 @@ export default {
       }
 
       const password = env[userConfig.passwordEnvKey] as string | undefined;
+      console.log(`[SSE-${username}] Password configured: ${!!password}`);
       if (!password) {
+        console.log(`[SSE-${username}] ERROR: No password in env.${userConfig.passwordEnvKey}`);
         return Response.json(
           { error: `Credentials not configured for ${username}` },
           { status: 500, headers: corsHeaders }
@@ -543,34 +548,45 @@ export default {
       }
 
       // Login to get fresh token
+      console.log(`[SSE-${username}] Logging in as ${userConfig.email}...`);
       const freshToken = await loginUser(userConfig.email, password, env);
       if (!freshToken) {
+        console.log(`[SSE-${username}] ERROR: Login failed for ${userConfig.email}`);
         return Response.json(
           { error: `Failed to authenticate as ${username}` },
           { status: 401, headers: corsHeaders }
         );
       }
+      console.log(`[SSE-${username}] Login successful, token obtained`);
 
       // Return SSE stream with message endpoint (matching Engram's format)
       const { readable, writable } = new TransformStream();
       const writer = writable.getWriter();
       const encoder = new TextEncoder();
 
-      // Send endpoint event for where to POST messages (matching Engram's /sse/message path)
-      const endpoint = `/sse/${username}/message`;
+      // Send endpoint event for where to POST messages
+      // Include full URL like Engram does
+      const endpoint = `${url.origin}/sse/${username}/message`;
+      console.log(`[SSE-${username}] Sending endpoint: ${endpoint}`);
 
-      // Write endpoint event and keep stream open
+      // Write endpoint event immediately and keep stream open
       (async () => {
-        await writer.write(encoder.encode(`event: endpoint\ndata: ${endpoint}\n\n`));
-        // Keep connection alive with periodic pings
-        const interval = setInterval(async () => {
-          try {
-            await writer.write(encoder.encode(`: ping\n\n`));
-          } catch {
-            clearInterval(interval);
-          }
-        }, 30000);
-        // Don't close the writer - keep stream open
+        try {
+          await writer.write(encoder.encode(`event: endpoint\ndata: ${endpoint}\n\n`));
+          console.log(`[SSE-${username}] Endpoint event sent`);
+          // Keep connection alive with periodic pings
+          const interval = setInterval(async () => {
+            try {
+              await writer.write(encoder.encode(`: ping\n\n`));
+              console.log(`[SSE-${username}] Ping sent`);
+            } catch (e) {
+              console.log(`[SSE-${username}] Ping failed, clearing interval`);
+              clearInterval(interval);
+            }
+          }, 15000); // More frequent pings
+        } catch (e) {
+          console.log(`[SSE-${username}] Error writing endpoint event: ${e}`);
+        }
       })();
 
       return new Response(readable, {
@@ -603,10 +619,11 @@ export default {
       return handleMcpRequest(request, messageToken, env, corsHeaders);
     }
 
-    // Named user message endpoint: /sse/claude/message, /sse/claude_code/message (Engram-style)
-    const sseMessageMatch = url.pathname.match(/^\/sse\/([a-z_]+)\/message$/);
+    // Named user message endpoint: /sse/claude/message, /sse/claude_code/message, /sse/claude-code/message (Engram-style)
+    const sseMessageMatch = url.pathname.match(/^\/sse\/([a-z_-]+)\/message$/);
     if (sseMessageMatch && request.method === "POST") {
       const username = sseMessageMatch[1];
+      console.log(`[MSG-${username}] POST request received`);
       const userConfig = NAMED_USERS[username];
 
       if (!userConfig) {
@@ -637,8 +654,8 @@ export default {
       return handleMcpRequest(request, freshToken, env, corsHeaders);
     }
 
-    // Legacy message endpoint: /message/claude, /message/claude_code
-    const namedMessageMatch = url.pathname.match(/^\/message\/([a-z_]+)$/);
+    // Legacy message endpoint: /message/claude, /message/claude_code, /message/claude-code
+    const namedMessageMatch = url.pathname.match(/^\/message\/([a-z_-]+)$/);
     if (namedMessageMatch && request.method === "POST") {
       const username = namedMessageMatch[1];
       const userConfig = NAMED_USERS[username];
