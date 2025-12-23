@@ -27,3 +27,6 @@ npm-debug.log*
 # Test coverage
 coverage/
 test_gemini.py
+reset-password.cjs
+reset-password.js
+reset-password.mjs
