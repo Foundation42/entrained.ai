@@ -9,12 +9,20 @@ import { evaluateCommunityCreation, generateCommunitySlug, generateCommunityImag
 const communities = new Hono<{ Bindings: Env }>();
 
 // GET /api/communities - List all communities
+// Query params: type=public|personal_timeline|inbox|all (default: public)
 communities.get('/', async (c) => {
-  const rows = await c.env.DB.prepare(`
-    SELECT * FROM communities
-    ORDER BY member_count DESC, created_at DESC
-    LIMIT 50
-  `).all<CommunityRow>();
+  const typeFilter = c.req.query('type') || 'public';
+
+  let query: string;
+  if (typeFilter === 'all') {
+    query = `SELECT * FROM communities ORDER BY member_count DESC, created_at DESC LIMIT 50`;
+  } else {
+    query = `SELECT * FROM communities WHERE community_type = ? ORDER BY member_count DESC, created_at DESC LIMIT 50`;
+  }
+
+  const rows = typeFilter === 'all'
+    ? await c.env.DB.prepare(query).all<CommunityRow>()
+    : await c.env.DB.prepare(query).bind(typeFilter).all<CommunityRow>();
 
   const result = rows.results.map(rowToCommunity);
   return c.json({ data: result });
@@ -157,8 +165,9 @@ communities.post('/', async (c) => {
     INSERT INTO communities (
       id, name, display_name, description, created_at, created_by,
       evaluation_config, min_level_to_post, min_good_faith_score,
-      require_sources_for_claims
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      require_sources_for_claims,
+      community_type, who_can_post, who_can_comment, who_can_view, who_can_join
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     communityId,
     name.toLowerCase(),
@@ -169,7 +178,12 @@ communities.post('/', async (c) => {
     JSON.stringify(evalConfig),
     body.min_level_to_post ?? null,
     body.min_good_faith_score ?? null,
-    body.require_sources_for_claims ? 1 : 0
+    body.require_sources_for_claims ? 1 : 0,
+    'public',    // Regular communities are public type
+    'members',   // Members can post
+    'anyone',    // Anyone can comment
+    'public',    // Anyone can view
+    'open'       // Anyone can join
   ).run();
 
   // Auto-join creator to community
@@ -200,11 +214,25 @@ communities.post('/:name/join', async (c) => {
 
   const name = c.req.param('name');
   const community = await c.env.DB.prepare(
-    'SELECT id FROM communities WHERE name = ?'
-  ).bind(name.toLowerCase()).first<{ id: string }>();
+    'SELECT * FROM communities WHERE name = ?'
+  ).bind(name.toLowerCase()).first<CommunityRow>();
 
   if (!community) {
     return c.json({ error: 'Community not found' }, 404);
+  }
+
+  // Check join permissions
+  const whoCanJoin = community.who_can_join || 'open';
+  if (whoCanJoin === 'none') {
+    return c.json({ error: 'This community does not accept new members' }, 403);
+  }
+  if (whoCanJoin === 'invite') {
+    // TODO: Check for invite
+    return c.json({ error: 'This community is invite-only' }, 403);
+  }
+  if (whoCanJoin === 'approval') {
+    // TODO: Create join request instead
+    return c.json({ error: 'This community requires approval to join' }, 403);
   }
 
   // Check if already member

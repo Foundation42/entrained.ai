@@ -1,15 +1,17 @@
 // Comments routes
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import type { Env, CommentRow, PostRow } from '../types';
+import type { Env, CommentRow, PostRow, CommunityRow } from '../types';
 import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
 import { rowToComment, saveEvaluation, updateProfileStats, generateCommentPath, awardXP } from '../lib/db';
 import { evaluateContent, calculateStatImpact, processMacros } from '../lib/ai';
+import { queuePostCommentNotification, queueReplyNotification, queueMentionNotifications } from '../lib/notifications';
 
 const comments = new Hono<{ Bindings: Env }>();
 
 // POST /api/c/:community/posts/:postId/comments - Create comment
 comments.post('/', async (c) => {
+  try {
   const postId = c.req.param('postId') ?? '';
 
   // Auth
@@ -38,6 +40,33 @@ comments.post('/', async (c) => {
   if (postRow.locked) {
     return c.json({ error: 'Post is locked' }, 403);
   }
+
+  // Get community to check comment permissions
+  const communityRow = await c.env.DB.prepare(
+    'SELECT * FROM communities WHERE id = ?'
+  ).bind(postRow.community_id).first<CommunityRow>();
+
+  if (!communityRow) {
+    return c.json({ error: 'Community not found' }, 404);
+  }
+
+  // Check commenting permissions
+  const whoCanComment = communityRow.who_can_comment || 'anyone';
+  if (whoCanComment === 'owner') {
+    // Only the owner can comment
+    if (communityRow.owner_profile_id !== profile.id && communityRow.created_by !== profile.id) {
+      return c.json({ error: 'Only the owner can comment in this community' }, 403);
+    }
+  } else if (whoCanComment === 'members') {
+    // Check if user is a member
+    const isMember = await c.env.DB.prepare(
+      'SELECT id FROM community_members WHERE community_id = ? AND profile_id = ?'
+    ).bind(communityRow.id, profile.id).first();
+    if (!isMember) {
+      return c.json({ error: 'You must be a member to comment in this community' }, 403);
+    }
+  }
+  // 'anyone' allows all authenticated users to comment
 
   // Parse body
   const body = await c.req.json<{
@@ -172,6 +201,57 @@ comments.post('/', async (c) => {
     JSON.stringify(impact)
   ).run();
 
+  // Queue notifications asynchronously via Cloudflare Queue
+  try {
+    // Notify post author of new comment
+    await queuePostCommentNotification(
+      c.env.NOTIFICATIONS_QUEUE,
+      postRow.author_id,
+      profile,
+      postRow.title,
+      postId,
+      commentId,
+      processedContent,
+      communityRow.name
+    );
+
+    // Notify parent comment author if this is a reply
+    if (body.parent_id) {
+      const parentComment = await c.env.DB.prepare(
+        'SELECT author_id FROM comments WHERE id = ?'
+      ).bind(body.parent_id).first<{ author_id: string }>();
+
+      if (parentComment && parentComment.author_id !== profile.id) {
+        await queueReplyNotification(
+          c.env.NOTIFICATIONS_QUEUE,
+          parentComment.author_id,
+          profile,
+          postRow.title,
+          postId,
+          commentId,
+          processedContent,
+          communityRow.name
+        );
+      }
+    }
+
+    // Queue notifications for @mentioned users
+    await queueMentionNotifications(
+      c.env.NOTIFICATIONS_QUEUE,
+      c.env.DB,
+      processedContent,
+      profile,
+      postRow.title,
+      postId,
+      commentId,
+      communityRow.name,
+      'comment'
+    );
+  } catch (err) {
+    console.error('[Notifications] Error queuing notifications:', err);
+    // Don't fail the request if notification queuing fails
+  }
+
   // Fetch and return
   const row = await c.env.DB.prepare(
     'SELECT * FROM comments WHERE id = ?'
@@ -191,6 +271,10 @@ comments.post('/', async (c) => {
       xp_awarded: xpAwarded,
     }
   }, 201);
+  } catch (err) {
+    console.error('[Comment Create] Error:', err);
+    return c.json({ error: err instanceof Error ? err.message : 'Unknown error' }, 500);
+  }
 });
 
 // PUT /api/comments/:commentId - Edit comment

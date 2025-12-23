@@ -24,6 +24,16 @@ id = "25534207e9e343fbaac70e815e4b2a41"
 binding = "ASSETS"
 bucket_name = "sprites-assets"
 
+# Notifications queue
+[[queues.producers]]
+queue = "goodfaith-notifications"
+binding = "NOTIFICATIONS_QUEUE"
+
+[[queues.consumers]]
+queue = "goodfaith-notifications"
+max_batch_size = 10
+max_retries = 3
+
 # Environment variables (secrets set via wrangler secret)
 [vars]
 ENVIRONMENT = "production"

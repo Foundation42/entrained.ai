@@ -1,8 +1,8 @@
 // Profile routes
 import { Hono } from 'hono';
-import type { Env, ProfileRow, PostRow, CommentRow } from '../types';
+import type { Env, ProfileRow, PostRow, CommentRow, CommunityRow } from '../types';
 import { getAuthProfile, verifyToken, getOrCreateProfile, rowToProfile } from '../lib/auth';
-import { rowToPost, rowToComment } from '../lib/db';
+import { rowToPost, rowToComment, rowToCommunity } from '../lib/db';
 
 const profiles = new Hono<{ Bindings: Env }>();
 
@@ -346,6 +346,129 @@ profiles.get('/me/stats', async (c) => {
       })),
     }
   });
+});
+
+// GET /api/me/timeline - Get current user's personal timeline community
+profiles.get('/me/timeline', async (c) => {
+  const profile = await getAuthProfile(c.req.raw, c.env);
+  if (!profile) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const timelineName = `u_${profile.username}`;
+  const row = await c.env.DB.prepare(
+    'SELECT * FROM communities WHERE name = ? AND community_type = ?'
+  ).bind(timelineName, 'personal_timeline').first<CommunityRow>();
+
+  if (!row) {
+    return c.json({ error: 'Timeline not found' }, 404);
+  }
+
+  return c.json({ data: rowToCommunity(row) });
+});
+
+// GET /api/me/inbox - Get current user's inbox community
+profiles.get('/me/inbox', async (c) => {
+  const profile = await getAuthProfile(c.req.raw, c.env);
+  if (!profile) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const inboxName = `u_${profile.username}_inbox`;
+  const row = await c.env.DB.prepare(
+    'SELECT * FROM communities WHERE name = ? AND community_type = ?'
+  ).bind(inboxName, 'inbox').first<CommunityRow>();
+
+  if (!row) {
+    return c.json({ error: 'Inbox not found' }, 404);
+  }
+
+  return c.json({ data: rowToCommunity(row) });
+});
+
+// GET /api/me/notifications - Get notification posts from inbox
+profiles.get('/me/notifications', async (c) => {
+  const profile = await getAuthProfile(c.req.raw, c.env);
+  if (!profile) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get inbox community
+  const inboxName = `u_${profile.username}_inbox`;
+  const inbox = await c.env.DB.prepare(
+    'SELECT id FROM communities WHERE name = ? AND community_type = ?'
+  ).bind(inboxName, 'inbox').first<{ id: string }>();
+
+  if (!inbox) {
+    return c.json({ data: { notifications: [], unread_count: 0 } });
+  }
+
+  // Get notifications (posts in inbox), newest first
+  const limit = Math.min(Number(c.req.query('limit')) || 20, 50);
+  const offset = Number(c.req.query('offset')) || 0;
+
+  const rows = await c.env.DB.prepare(`
+    SELECT * FROM posts
+    WHERE community_id = ?
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).bind(inbox.id, limit, offset).all<PostRow>();
+
+  // Get total count for pagination
+  const countResult = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM posts WHERE community_id = ?'
+  ).bind(inbox.id).first<{ count: number }>();
+
+  const notifications = rows.results.map(row => ({
+    ...rowToPost(row),
+    // Parse metadata from title if it matches our format
+    notification_type: parseNotificationType(row.title),
+  }));
+
+  return c.json({
+    data: {
+      notifications,
+      total: countResult?.count || 0,
+      limit,
+      offset,
+    }
+  });
+});
+
+// Helper to parse notification type from title
+function parseNotificationType(title: string): string {
+  if (title.startsWith('New comment on')) return 'comment_on_post';
+  if (title.includes('replied to your comment')) return 'reply_to_comment';
+  if (title.includes('mentioned you')) return 'mention';
+  if (title.startsWith('Welcome to GoodFaith')) return 'welcome';
+  return 'other';
+}
+
+// GET /api/u/:username/timeline - Get user's public timeline
+profiles.get('/u/:username/timeline', async (c) => {
+  const username = c.req.param('username').toLowerCase();
+
+  const timelineName = `u_${username}`;
+  const row = await c.env.DB.prepare(
+    'SELECT * FROM communities WHERE name = ? AND community_type = ?'
+  ).bind(timelineName, 'personal_timeline').first<CommunityRow>();
+
+  if (!row) {
+    return c.json({ error: 'Timeline not found' }, 404);
+  }
+
+  // Check view permissions
+  const whoCanView = row.who_can_view || 'public';
+  if (whoCanView !== 'public') {
+    // For now, only public timelines are accessible without auth
+    // TODO: Check if viewer is owner or member
+    const profile = await getAuthProfile(c.req.raw, c.env);
+    if (!profile || (whoCanView === 'owner' && row.owner_profile_id !== profile.id)) {
+      return c.json({ error: 'This timeline is private' }, 403);
+    }
+  }
+
+  return c.json({ data: rowToCommunity(row) });
 });
 
 export default profiles;

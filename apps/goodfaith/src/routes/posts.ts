@@ -5,6 +5,7 @@ import type { Env, PostRow, CommunityRow, CommentRow } from '../types';
 import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
 import { rowToPost, rowToComment, saveEvaluation, updateProfileStats, awardXP } from '../lib/db';
 import { evaluateContent, calculateStatImpact, processMacros } from '../lib/ai';
+import { queueMentionNotifications } from '../lib/notifications';
 
 const posts = new Hono<{ Bindings: Env }>();
 
@@ -103,6 +104,27 @@ posts.post('/', async (c) => {
   if (!communityRow) {
     return c.json({ error: 'Community not found' }, 404);
   }
+
+  // Check posting permissions
+  const whoCanPost = communityRow.who_can_post || 'members';
+  if (whoCanPost === 'owner') {
+    // Only the owner can post
+    if (communityRow.owner_profile_id !== profile.id && communityRow.created_by !== profile.id) {
+      return c.json({ error: 'Only the owner can post in this community' }, 403);
+    }
+  } else if (whoCanPost === 'system') {
+    // Only system can post (e.g., notifications)
+    return c.json({ error: 'This community only accepts system notifications' }, 403);
+  } else if (whoCanPost === 'members') {
+    // Check if user is a member
+    const isMember = await c.env.DB.prepare(
+      'SELECT id FROM community_members WHERE community_id = ? AND profile_id = ?'
+    ).bind(communityRow.id, profile.id).first();
+    if (!isMember) {
+      return c.json({ error: 'You must be a member to post in this community' }, 403);
+    }
+  }
+  // 'anyone' allows all authenticated users to post
 
   // Check requirements
   if (communityRow.min_level_to_post && profile.level < communityRow.min_level_to_post) {
@@ -205,6 +227,23 @@ posts.post('/', async (c) => {
     now,
     JSON.stringify(impact)
   ).run();
+
+  // Queue notifications for @mentioned users in the post
+  try {
+    await queueMentionNotifications(
+      c.env.NOTIFICATIONS_QUEUE,
+      c.env.DB,
+      processedContent,
+      profile,
+      body.title,
+      postId,
+      postId,
+      communityRow.name,
+      'post'
+    );
+  } catch (err) {
+    console.error('[Notifications] Post mention queue failed:', err);
+  }
 
   // Fetch and return
   const postRow = await c.env.DB.prepare(

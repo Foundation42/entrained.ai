@@ -5,6 +5,12 @@ import type {
   ProfileRow,
   Community,
   CommunityRow,
+  CommunityType,
+  CommunityPermissions,
+  WhoCanPost,
+  WhoCanComment,
+  WhoCanView,
+  WhoCanJoin,
   Post,
   PostRow,
   Comment,
@@ -30,6 +36,15 @@ export function rowToCommunity(row: CommunityRow): Community {
     member_count: row.member_count,
     post_count: row.post_count,
     image_url: row.image_url ?? undefined,
+    // Permission system
+    community_type: (row.community_type || 'public') as CommunityType,
+    permissions: {
+      who_can_post: (row.who_can_post || 'members') as WhoCanPost,
+      who_can_comment: (row.who_can_comment || 'anyone') as WhoCanComment,
+      who_can_view: (row.who_can_view || 'public') as WhoCanView,
+      who_can_join: (row.who_can_join || 'open') as WhoCanJoin,
+    },
+    owner_profile_id: row.owner_profile_id ?? undefined,
   };
 }
 

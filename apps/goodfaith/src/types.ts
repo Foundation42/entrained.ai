@@ -5,12 +5,29 @@ export interface Env {
   DB: D1Database;
   KV: KVNamespace;
   ASSETS: R2Bucket;  // Shared with sprites for community images
+  NOTIFICATIONS_QUEUE: Queue<NotificationMessage>;  // For async notifications
   ENVIRONMENT: string;
   DOMAIN: string;
   PARENT_SITE: string;
   AI_MODEL: string;
   GEMINI_API_KEY: string;
   GEMINI_IMAGE_MODEL?: string;  // For image generation
+}
+
+// Notification queue message types
+export type NotificationType = 'comment_on_post' | 'reply_to_comment' | 'mention' | 'welcome';
+
+export interface NotificationMessage {
+  type: NotificationType;
+  recipientProfileId: string;
+  actorUsername: string;
+  actorId: string;
+  postId: string;
+  postTitle: string;
+  contentId: string;  // Comment ID or Post ID
+  communityName: string;
+  contentPreview: string;
+  contentType: 'post' | 'comment';
 }
 
 // Profile types (linked to auth.entrained.ai users)
@@ -53,6 +70,19 @@ export interface ProfileRow {
 }
 
 // Community types
+export type CommunityType = 'public' | 'personal_timeline' | 'inbox' | 'private';
+export type WhoCanPost = 'owner' | 'members' | 'anyone' | 'system';
+export type WhoCanComment = 'owner' | 'members' | 'anyone';
+export type WhoCanView = 'public' | 'members' | 'owner';
+export type WhoCanJoin = 'open' | 'approval' | 'invite' | 'none';
+
+export interface CommunityPermissions {
+  who_can_post: WhoCanPost;
+  who_can_comment: WhoCanComment;
+  who_can_view: WhoCanView;
+  who_can_join: WhoCanJoin;
+}
+
 export interface EvaluationConfig {
   good_faith_weight: number;
   substantive_weight: number;
@@ -82,6 +112,10 @@ export interface Community {
   member_count: number;
   post_count: number;
   image_url?: string;  // AI-generated community image
+  // Permission system
+  community_type: CommunityType;
+  permissions: CommunityPermissions;
+  owner_profile_id?: string;  // For personal communities
 }
 
 export interface CommunityRow {
@@ -98,6 +132,13 @@ export interface CommunityRow {
   member_count: number;
   post_count: number;
   image_url: string | null;
+  // Permission system
+  community_type: string;
+  who_can_post: string;
+  who_can_comment: string;
+  who_can_view: string;
+  who_can_join: string;
+  owner_profile_id: string | null;
 }
 
 // Post types
