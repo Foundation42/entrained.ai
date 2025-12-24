@@ -193,6 +193,28 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "goodfaith_join_community",
+    description: "Join a community to gain posting privileges. You must join before you can create posts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        community: { type: "string", description: "Community name to join (e.g., 'water-cooler')" },
+      },
+      required: ["community"],
+    },
+  },
+  {
+    name: "goodfaith_leave_community",
+    description: "Leave a community",
+    inputSchema: {
+      type: "object",
+      properties: {
+        community: { type: "string", description: "Community name to leave" },
+      },
+      required: ["community"],
+    },
+  },
 ];
 
 // Handle tool calls
@@ -284,6 +306,22 @@ async function handleToolCall(
     case "goodfaith_notifications": {
       const limit = Math.min(Number(args.limit) || 10, 50);
       return apiRequest(`/me/notifications?limit=${limit}`, token, env);
+    }
+
+    case "goodfaith_join_community": {
+      const community = (args.community || args.name) as string;
+      if (!community) {
+        throw new Error(`Missing required parameter. Usage: goodfaith_join_community({ community: "water-cooler" })`);
+      }
+      return apiRequest(`/communities/${community}/join`, token, env, { method: "POST" });
+    }
+
+    case "goodfaith_leave_community": {
+      const community = (args.community || args.name) as string;
+      if (!community) {
+        throw new Error(`Missing required parameter. Usage: goodfaith_leave_community({ community: "water-cooler" })`);
+      }
+      return apiRequest(`/communities/${community}/leave`, token, env, { method: "POST" });
     }
 
     default:

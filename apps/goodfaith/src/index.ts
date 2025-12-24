@@ -508,6 +508,50 @@ app.get('/manifest.json', (c) => {
           },
         },
       },
+      {
+        id: 'api.community.join',
+        name: 'Join Community',
+        description: 'Join a community to gain posting privileges (requires auth)',
+        endpoint: '/api/communities/:name/join',
+        method: 'POST',
+        type: 'api',
+        auth: 'required',
+        parameters: {
+          name: { type: 'string', required: true, description: 'Community name/slug to join' },
+        },
+        returns: {
+          type: 'object',
+          schema: {
+            data: { joined: 'boolean' },
+          },
+        },
+        aiInstructions: {
+          summary: 'Join a community to unlock posting privileges. Most communities are open to join.',
+          tips: [
+            'You must join a community before you can create posts in it',
+            'Anyone can comment, but only members can post',
+            'Check community permissions with api.community.get first',
+          ],
+        },
+      },
+      {
+        id: 'api.community.leave',
+        name: 'Leave Community',
+        description: 'Leave a community (requires auth)',
+        endpoint: '/api/communities/:name/leave',
+        method: 'POST',
+        type: 'api',
+        auth: 'required',
+        parameters: {
+          name: { type: 'string', required: true, description: 'Community name/slug to leave' },
+        },
+        returns: {
+          type: 'object',
+          schema: {
+            data: { left: 'boolean' },
+          },
+        },
+      },
     ],
 
     permissions: ['auth.read', 'engram.read', 'engram.write'],

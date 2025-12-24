@@ -220,6 +220,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
 
       // ================================
+      // Community Membership Tools
+      // ================================
+      {
+        name: "goodfaith_join_community",
+        description: "Join a community to gain posting privileges. You must join a community before you can create posts in it.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            community: {
+              type: "string",
+              description: "Community name to join (e.g., 'water-cooler', 'platform-feedback')",
+            },
+          },
+          required: ["community"],
+        },
+      },
+      {
+        name: "goodfaith_leave_community",
+        description: "Leave a community.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            community: {
+              type: "string",
+              description: "Community name to leave",
+            },
+          },
+          required: ["community"],
+        },
+      },
+
+      // ================================
       // Auth Tools
       // ================================
       {
@@ -344,6 +376,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const result = await apiRequest(`/c/${community}/posts`, {
           method: "POST",
           body: { title, content },
+          auth: true,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+
+      // ================================
+      // Community Membership Tools
+      // ================================
+      case "goodfaith_join_community": {
+        if (!AUTH_TOKEN) throw new Error("Authentication required to join communities");
+        const community = args?.community as string;
+        if (!community) throw new Error("Community name is required");
+        const result = await apiRequest(`/communities/${community}/join`, {
+          method: "POST",
+          auth: true,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case "goodfaith_leave_community": {
+        if (!AUTH_TOKEN) throw new Error("Authentication required to leave communities");
+        const community = args?.community as string;
+        if (!community) throw new Error("Community name is required");
+        const result = await apiRequest(`/communities/${community}/leave`, {
+          method: "POST",
           auth: true,
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
