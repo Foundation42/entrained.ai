@@ -414,6 +414,65 @@ export function replPage(): string {
       background: var(--accent-hover);
     }
 
+    /* Examples dropdown */
+    .examples-dropdown {
+      position: relative;
+    }
+
+    .examples-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      margin-top: 0.25rem;
+      min-width: 320px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      z-index: 100;
+      display: none;
+    }
+
+    .examples-menu.open {
+      display: block;
+    }
+
+    .example-item {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .example-item:last-child {
+      border-bottom: none;
+    }
+
+    .example-item:hover {
+      background: var(--bg-tertiary);
+    }
+
+    .example-title {
+      font-weight: 500;
+      color: var(--accent);
+      margin-bottom: 0.25rem;
+    }
+
+    .example-desc {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .example-code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     /* Search panel */
     .search-panel {
       position: fixed;
@@ -598,6 +657,10 @@ export function replPage(): string {
         <div class="toolbar">
           <button class="toolbar-btn primary" onclick="runAllCells()">Run All</button>
           <button class="toolbar-btn" onclick="addCell('code')">+ Code</button>
+          <div class="examples-dropdown">
+            <button class="toolbar-btn" onclick="toggleExamples()">Examples</button>
+            <div class="examples-menu" id="examplesMenu"></div>
+          </div>
           <button class="toolbar-btn" onclick="clearOutputs()">Clear Outputs</button>
         </div>
 
@@ -1418,7 +1481,15 @@ export function replPage(): string {
     // Format output value
     function formatValue(value) {
       if (value === null || value === undefined) return 'nil';
-      if (typeof value === 'object') return JSON.stringify(value, null, 2);
+      if (typeof value === 'bigint') return String(value);
+      if (Array.isArray(value)) {
+        // Handle arrays with potential BigInts
+        return '(' + value.map(v => typeof v === 'bigint' ? String(v) : formatValue(v)).join(' ') + ')';
+      }
+      if (typeof value === 'object') {
+        // Use replacer to handle BigInts in objects
+        return JSON.stringify(value, (k, v) => typeof v === 'bigint' ? String(v) : v, 2);
+      }
       return String(value);
     }
 
@@ -1537,6 +1608,134 @@ export function replPage(): string {
       if (bytes < 1024) return bytes + ' B';
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
       return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    // Examples data
+    const examples = [
+      {
+        title: 'Fibonacci',
+        desc: 'Compile fibonacci and compute values',
+        cells: [
+          '(define fib (intent "fibonacci"))',
+          '(fib 10)',
+          '(map fib (range 15))'
+        ]
+      },
+      {
+        title: 'Quicksort',
+        desc: 'Sort arrays with AI-generated WASM',
+        cells: [
+          '(define qsort (intent "quicksort"))',
+          '(qsort (list 64 25 12 22 11 90 42))'
+        ]
+      },
+      {
+        title: 'Prime Numbers',
+        desc: 'Filter primes using compiled predicate',
+        cells: [
+          '(define prime? (intent "is prime"))',
+          '(filter prime? (range 2 50))'
+        ]
+      },
+      {
+        title: 'Factorial',
+        desc: 'Compute factorials with WASM speed',
+        cells: [
+          '(define fact (intent "factorial"))',
+          '(map fact (range 1 13))'
+        ]
+      },
+      {
+        title: 'GCD',
+        desc: 'Greatest common divisor',
+        cells: [
+          '(define gcd (intent "greatest common divisor"))',
+          '(gcd 48 18)',
+          '(gcd 1071 462)'
+        ]
+      },
+      {
+        title: 'Higher-Order Functions',
+        desc: 'Pure LISP with map, filter, reduce',
+        cells: [
+          '; Square numbers',
+          '(map (lambda (x) (* x x)) (range 10))',
+          '; Sum of squares',
+          '(reduce + (map (lambda (x) (* x x)) (range 1 11)) 0)'
+        ]
+      },
+      {
+        title: 'Mandelbrot',
+        desc: 'Per-pixel escape iteration',
+        cells: [
+          '(define mandel (intent "mandelbrot escape iteration"))',
+          '(mandel 0.0 0.0 256)   ; in set -> 256',
+          '(mandel 0.5 0.5 256)   ; escapes quickly',
+          '(mandel -0.75 0.1 256) ; near boundary'
+        ]
+      }
+    ];
+
+    // Toggle examples menu
+    function toggleExamples() {
+      const menu = document.getElementById('examplesMenu');
+      const isOpen = menu.classList.contains('open');
+
+      // Close menu if clicking elsewhere
+      if (!isOpen) {
+        menu.innerHTML = examples.map((ex, i) => \`
+          <div class="example-item" onclick="loadExample(\${i}); event.stopPropagation();">
+            <div class="example-title">\${ex.title}</div>
+            <div class="example-desc">\${ex.desc}</div>
+            <div class="example-code">\${escapeHtml(ex.cells[0])}</div>
+          </div>
+        \`).join('');
+
+        // Close when clicking outside
+        setTimeout(() => {
+          document.addEventListener('click', closeExamplesOnClickOutside);
+        }, 0);
+      } else {
+        document.removeEventListener('click', closeExamplesOnClickOutside);
+      }
+
+      menu.classList.toggle('open');
+    }
+
+    function closeExamplesOnClickOutside(e) {
+      const dropdown = document.querySelector('.examples-dropdown');
+      if (!dropdown.contains(e.target)) {
+        document.getElementById('examplesMenu').classList.remove('open');
+        document.removeEventListener('click', closeExamplesOnClickOutside);
+      }
+    }
+
+    // Load an example
+    function loadExample(index) {
+      const ex = examples[index];
+      document.getElementById('examplesMenu').classList.remove('open');
+      document.removeEventListener('click', closeExamplesOnClickOutside);
+
+      // Clear existing cells
+      cells = [];
+      Object.keys(editors).forEach(id => {
+        editors[id].dispose();
+        delete editors[id];
+      });
+
+      // Add example cells
+      ex.cells.forEach(code => {
+        const id = 'cell-' + (++cellIdCounter);
+        cells.push({
+          id,
+          type: 'code',
+          content: code,
+          output: null,
+          status: 'idle'
+        });
+      });
+
+      renderCells();
     }
 
     // Toggle search panel
