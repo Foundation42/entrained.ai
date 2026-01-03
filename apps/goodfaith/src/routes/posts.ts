@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import type { Env, PostRow, CommunityRow, CommentRow } from '../types';
-import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
+import { getAuthProfile, verifyToken, getOrCreateProfile, isAdmin } from '../lib/auth';
 import { rowToPost, rowToComment, saveEvaluation, updateProfileStats, awardXP } from '../lib/db';
 import { evaluateContent, calculateStatImpact, processMacros } from '../lib/ai';
 import { queueMentionNotifications } from '../lib/notifications';
@@ -396,6 +396,51 @@ posts.post('/:postId/evaluate', async (c) => {
       predictedImpact: impact,
     }
   });
+});
+
+// DELETE /api/c/:community/posts/:postId - Delete post (admin or author)
+posts.delete('/:postId', async (c) => {
+  const postId = c.req.param('postId');
+
+  // Auth
+  const profile = await getAuthProfile(c.req.raw, c.env);
+  if (!profile) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get post
+  const postRow = await c.env.DB.prepare(
+    'SELECT * FROM posts WHERE id = ?'
+  ).bind(postId).first<PostRow>();
+
+  if (!postRow) {
+    return c.json({ error: 'Post not found' }, 404);
+  }
+
+  // Check permission: must be author or admin
+  const isAuthor = postRow.author_id === profile.id;
+  const isAdminUser = await isAdmin(profile.id, c.env);
+
+  if (!isAuthor && !isAdminUser) {
+    return c.json({ error: 'Not authorized to delete this post' }, 403);
+  }
+
+  // Delete comments first (foreign key constraint)
+  await c.env.DB.prepare(
+    'DELETE FROM comments WHERE post_id = ?'
+  ).bind(postId).run();
+
+  // Delete the post
+  await c.env.DB.prepare(
+    'DELETE FROM posts WHERE id = ?'
+  ).bind(postId).run();
+
+  // Update community post count
+  await c.env.DB.prepare(
+    'UPDATE communities SET post_count = post_count - 1 WHERE id = ?'
+  ).bind(postRow.community_id).run();
+
+  return c.json({ data: { deleted: true, postId } });
 });
 
 export default posts;

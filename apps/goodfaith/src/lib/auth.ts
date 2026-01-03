@@ -326,3 +326,13 @@ export function determineClass(stats: Profile['stats']): Profile['class'] {
 
   return null;
 }
+
+// Check if a profile is an admin (first user created)
+export async function isAdmin(profileId: string, env: Env): Promise<boolean> {
+  // Admin is the first user created (site owner)
+  const firstUser = await env.DB.prepare(
+    'SELECT id FROM profiles ORDER BY created_at ASC LIMIT 1'
+  ).first<{ id: string }>();
+
+  return firstUser?.id === profileId;
+}

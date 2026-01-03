@@ -1385,8 +1385,11 @@ export function replPage(): string {
           if (registryResp.ok) {
             const registryData = await registryResp.json();
             const meta = registryData.metadata || {};
-            // Check for backfilled semantic key, or use direct metadata
-            semantic = meta.semantic || (meta.renderer ? meta : null);
+            // Rich metadata (inputs, output, description, etc.) is at top level of meta
+            // The meta.semantic field only contains the embedding, so use whole meta object
+            if (meta.inputs || meta.output || meta.description || meta.renderer) {
+              semantic = meta;
+            }
           }
         } catch (e) {
           console.warn('Failed to fetch semantic metadata:', e);
@@ -1522,7 +1525,7 @@ export function replPage(): string {
             [/(define|lambda|let|letrec|if|cond|else|and|or|not|quote|begin|do|case|import|export|require|load|intent|set!)(?![a-zA-Z0-9_\\-])/, 'keyword'],
 
             // Builtins
-            [/(map|filter|reduce|range|list|cons|car|cdr|first|rest|nth|length|append|reverse|sort|apply|eval|print|display|search|abs|mod|max|min|fib|factorial|gcd|fibonacci|is_prime|string-length|string-concat|substring|char-at|string-upcase|string-downcase|string-split|string-join|string-trim|string->list|list->string|string->number|number->string|string-contains\\?|string-index-of|string-replace|string=\\?|string<\\?|string>\\?|regex-test|regex-match|regex-match-all|regex-replace|regex-split)(?![a-zA-Z0-9_\\-])/, 'support.function'],
+            [/(map|filter|reduce|range|list|cons|car|cdr|first|rest|nth|length|append|reverse|sort|apply|eval|print|display|describe|wasm-stats|wasm-cache-size|abs|mod|max|min|fib|factorial|gcd|fibonacci|is_prime|string-length|string-concat|substring|char-at|string-upcase|string-downcase|string-split|string-join|string-trim|string->list|list->string|string->number|number->string|string-contains\\?|string-index-of|string-replace|string=\\?|string<\\?|string>\\?|regex-test|regex-match|regex-match-all|regex-replace|regex-split)(?![a-zA-Z0-9_\\-])/, 'support.function'],
 
             // Boolean predicates
             [/(eq\\?|equal\\?|null\\?|pair\\?|list\\?|number\\?|string\\?|symbol\\?)/, 'support.function'],
@@ -1675,10 +1678,7 @@ export function replPage(): string {
           // LISP identifier chars - escape forward slash to avoid regex confusion
           const isIdentChar = (c) => c && /[a-zA-Z0-9_\\-?!<>=*+\\/]/.test(c);
 
-          if (!isIdentChar(line[col])) {
-            console.log('[Hover] Not on identifier char:', line[col]);
-            return null;
-          }
+          if (!isIdentChar(line[col])) return null;
 
           // Scan backwards and forwards to find full identifier
           let start = col;
@@ -1687,7 +1687,6 @@ export function replPage(): string {
           while (end < line.length - 1 && isIdentChar(line[end + 1])) end++;
 
           const word = line.slice(start, end + 1);
-          console.log('[Hover] Word:', word);
           if (!word) return null;
 
           // Create range for hover highlight (1-based columns)
@@ -1697,7 +1696,6 @@ export function replPage(): string {
           // Try to look up in the evaluator's environment
           try {
             const val = lisp.globalEnv.get(word);
-            console.log('[Hover] Found in env:', word, val ? 'yes' : 'no', val?.wasmFunc ? 'wasm' : '', val?.semantic ? 'semantic' : '');
 
             // Check if it's a WASM function with semantic metadata
             if (val && typeof val === 'object' && val.wasmFunc && val.semantic) {
@@ -1821,7 +1819,6 @@ export function replPage(): string {
 
           } catch (e) {
             // Symbol not defined, check if it's a builtin
-            console.log('[Hover] Not in env, checking builtins for:', word);
           }
 
           // Builtin documentation
@@ -1876,14 +1873,12 @@ export function replPage(): string {
           };
 
           if (builtinDocs[word]) {
-            console.log('[Hover] Found builtin docs for:', word);
             return {
               range: new monaco.Range(position.lineNumber, wordStart, position.lineNumber, wordEnd),
               contents: [{ value: builtinDocs[word] }]
             };
           }
 
-          console.log('[Hover] No hover found for:', word);
           return null;
         }
       });

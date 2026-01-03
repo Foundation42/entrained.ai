@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import type { Env, CommentRow, PostRow, CommunityRow } from '../types';
-import { getAuthProfile, verifyToken, getOrCreateProfile } from '../lib/auth';
+import { getAuthProfile, verifyToken, getOrCreateProfile, isAdmin } from '../lib/auth';
 import { rowToComment, saveEvaluation, updateProfileStats, generateCommentPath, awardXP } from '../lib/db';
 import { evaluateContent, calculateStatImpact, processMacros } from '../lib/ai';
 import { queuePostCommentNotification, queueReplyNotification, queueMentionNotifications } from '../lib/notifications';
@@ -404,6 +404,46 @@ comments.post('/:commentId/uncloak', async (c) => {
       quota_bonus: quotaBonus,
     }
   });
+});
+
+// DELETE /api/c/:community/posts/:postId/comments/:commentId - Delete comment (admin or author)
+comments.delete('/:commentId', async (c) => {
+  const commentId = c.req.param('commentId');
+
+  // Auth
+  const profile = await getAuthProfile(c.req.raw, c.env);
+  if (!profile) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get comment
+  const commentRow = await c.env.DB.prepare(
+    'SELECT * FROM comments WHERE id = ?'
+  ).bind(commentId).first<CommentRow>();
+
+  if (!commentRow) {
+    return c.json({ error: 'Comment not found' }, 404);
+  }
+
+  // Check permission: must be author or admin
+  const isAuthor = commentRow.author_id === profile.id;
+  const isAdminUser = await isAdmin(profile.id, c.env);
+
+  if (!isAuthor && !isAdminUser) {
+    return c.json({ error: 'Not authorized to delete this comment' }, 403);
+  }
+
+  // Delete the comment (child comments will remain but lose their parent reference)
+  await c.env.DB.prepare(
+    'DELETE FROM comments WHERE id = ?'
+  ).bind(commentId).run();
+
+  // Update post comment count
+  await c.env.DB.prepare(
+    'UPDATE posts SET comment_count = comment_count - 1 WHERE id = ?'
+  ).bind(commentRow.post_id).run();
+
+  return c.json({ data: { deleted: true, commentId } });
 });
 
 export default comments;

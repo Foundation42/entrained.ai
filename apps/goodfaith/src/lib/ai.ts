@@ -63,6 +63,7 @@ Evaluate on these dimensions (0-100):
    - Does it add new information or perspective?
    - Is there meaningful analysis or reasoning?
    - Or is it just restating known positions?
+   - EXCEPTION: Comments that primarily @mention users to invite them into a discussion are a valid social pattern. Score these 50+ for substance if the invitation is genuine (e.g., "What do you think @alice @bob?").
 
 3. CHARITABLE (0-100)
    - Does it represent opposing views accurately?
