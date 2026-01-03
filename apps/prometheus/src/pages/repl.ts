@@ -2517,9 +2517,10 @@ export function replPage(): string {
         title: 'Regex',
         desc: 'Regular expression matching',
         cells: [
-          '(regex-match-all "\\\\d+" "a1b22c333")',
-          '(regex-replace "\\\\s+" "-" "hello   world")',
-          '(filter (lambda (s) (regex-test "^a" s)) (list "apple" "banana" "avocado"))'
+          '; Find all numbers in a string\\n(regex-match-all "\\\\d+" "a1b22c333")',
+          '; Replace whitespace with dashes\\n(regex-replace "\\\\s+" "-" "hello   world")',
+          '; Filter words starting with "a"\\n(filter (lambda (s) (regex-test "^a" s)) (list "apple" "banana" "avocado"))',
+          '; Extract email domains\\n(map (lambda (e) (regex-match "@.+" e)) (list "alice@gmail.com" "bob@company.org"))'
         ]
       },
       {
