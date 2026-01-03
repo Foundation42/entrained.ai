@@ -1434,7 +1434,25 @@ export function replPage(): string {
 
       // Register completion provider for builtins
       monaco.languages.registerCompletionItemProvider('prometheus-lisp', {
+        triggerCharacters: ['(', '-', '>'],
         provideCompletionItems: (model, position) => {
+          // Find the word being typed
+          const textUntilPosition = model.getValueInRange({
+            startLineNumber: position.lineNumber,
+            startColumn: 1,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column
+          });
+          const match = textUntilPosition.match(/[a-zA-Z][a-zA-Z0-9\\-\\?>]*$/);
+          const wordStart = match ? position.column - match[0].length : position.column;
+
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: wordStart,
+            endColumn: position.column
+          };
+
           const builtins = [
             // Core
             { label: 'define', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'define ', detail: 'Define a variable or function' },
@@ -1505,15 +1523,7 @@ export function replPage(): string {
           ];
 
           return {
-            suggestions: builtins.map(b => ({
-              ...b,
-              range: {
-                startLineNumber: position.lineNumber,
-                endLineNumber: position.lineNumber,
-                startColumn: position.column,
-                endColumn: position.column
-              }
-            }))
+            suggestions: builtins.map(b => ({ ...b, range }))
           };
         }
       });
