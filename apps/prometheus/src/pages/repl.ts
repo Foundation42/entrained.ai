@@ -8,6 +8,7 @@ export function replPage(): string {
   <title>Prometheus REPL - Intent-Driven Computation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/monaco-editor@0.45.0/min/vs/loader.js"></script>
   <style>
     :root {
       --bg: #0d1117;
@@ -227,31 +228,38 @@ export function replPage(): string {
     /* Code editor area */
     .cell-editor {
       position: relative;
-      min-height: 60px;
+      min-height: 80px;
+      background: var(--bg);
     }
 
     .editor-container {
       width: 100%;
-      min-height: 60px;
+      height: 80px;
+      min-height: 80px;
     }
 
     /* Monaco overrides */
-    .monaco-editor {
-      padding-top: 0.5rem !important;
+    .monaco-editor,
+    .monaco-editor .overflow-guard {
+      border-radius: 0 0 8px 8px;
     }
 
-    /* Simple textarea fallback */
+    .monaco-editor .margin {
+      background: var(--bg) !important;
+    }
+
+    /* Fallback textarea (shown while Monaco loads) */
     .code-textarea {
       width: 100%;
-      min-height: 60px;
+      min-height: 80px;
       padding: 0.75rem 1rem;
-      background: transparent;
+      background: var(--bg);
       border: none;
       color: var(--text);
       font-family: 'JetBrains Mono', monospace;
-      font-size: 0.9rem;
+      font-size: 14px;
       line-height: 1.5;
-      resize: vertical;
+      resize: none;
       outline: none;
     }
 
@@ -628,8 +636,101 @@ export function replPage(): string {
     let cells = [];
     let activeCell = null;
     let searchTimeout = null;
+    let monaco = null;
+    let editors = {};  // Map of cell id -> Monaco editor instance
 
-    // Initialize with a welcome cell
+    // Initialize Monaco and the app
+    require.config({ paths: { vs: 'https://unpkg.com/monaco-editor@0.45.0/min/vs' } });
+    require(['vs/editor/editor.main'], function(_monaco) {
+      monaco = _monaco;
+
+      // Register Prometheus LISP language
+      monaco.languages.register({ id: 'prometheus-lisp' });
+
+      // Define syntax highlighting
+      monaco.languages.setMonarchTokensProvider('prometheus-lisp', {
+        keywords: ['define', 'lambda', 'let', 'letrec', 'if', 'cond', 'else',
+                   'and', 'or', 'not', 'quote', 'begin', 'do', 'case',
+                   'import', 'export', 'require', 'load', 'intent', 'set!'],
+        builtins: ['map', 'filter', 'reduce', 'range', 'list', 'cons', 'car', 'cdr',
+                   'first', 'rest', 'nth', 'length', 'append', 'reverse', 'sort',
+                   'apply', 'eval', 'print', 'display', 'newline',
+                   'eq?', 'equal?', 'null?', 'pair?', 'list?', 'number?', 'string?', 'symbol?',
+                   'search', 'wasm-stats', 'wasm-cache-size', 'abs', 'mod', 'max', 'min',
+                   'fib', 'factorial', 'gcd', 'is_prime', 'fibonacci'],
+
+        tokenizer: {
+          root: [
+            // Whitespace
+            [/\\s+/, 'white'],
+
+            // Comments
+            [/;.*$/, 'comment'],
+
+            // Strings
+            [/"/, 'string', '@string'],
+
+            // Numbers
+            [/-?\\d+\\.\\d+/, 'number.float'],
+            [/-?\\d+/, 'number'],
+
+            // Parentheses
+            [/[()]/, 'delimiter.parenthesis'],
+
+            // Keywords
+            [/(define|lambda|let|letrec|if|cond|else|and|or|not|quote|begin|do|case|import|export|require|load|intent|set!)(?![a-zA-Z0-9_\\-])/, 'keyword'],
+
+            // Builtins
+            [/(map|filter|reduce|range|list|cons|car|cdr|first|rest|nth|length|append|reverse|sort|apply|eval|print|display|search|abs|mod|max|min|fib|factorial|gcd|fibonacci|is_prime)(?![a-zA-Z0-9_\\-])/, 'support.function'],
+
+            // Boolean predicates
+            [/(eq\\?|equal\\?|null\\?|pair\\?|list\\?|number\\?|string\\?|symbol\\?)/, 'support.function'],
+
+            // Operators
+            [/[+\\-*\\/<>=]+/, 'operator'],
+
+            // Identifiers
+            [/[a-zA-Z_][a-zA-Z0-9_\\-\\?\\!]*/, 'identifier'],
+          ],
+
+          string: [
+            [/[^\\\\"]+/, 'string'],
+            [/\\\\./, 'string.escape'],
+            [/"/, 'string', '@pop'],
+          ],
+        },
+      });
+
+      // Define GitHub Dark theme
+      monaco.editor.defineTheme('prometheus-dark', {
+        base: 'vs-dark',
+        inherit: true,
+        rules: [
+          { token: 'comment', foreground: '6e7681', fontStyle: 'italic' },
+          { token: 'string', foreground: 'a5d6ff' },
+          { token: 'number', foreground: '79c0ff' },
+          { token: 'number.float', foreground: '79c0ff' },
+          { token: 'keyword', foreground: 'ff7b72', fontStyle: 'bold' },
+          { token: 'support.function', foreground: 'd2a8ff' },
+          { token: 'identifier', foreground: 'c9d1d9' },
+          { token: 'delimiter.parenthesis', foreground: 'ffa657' },
+          { token: 'operator', foreground: '79c0ff' },
+        ],
+        colors: {
+          'editor.background': '#0d1117',
+          'editor.foreground': '#c9d1d9',
+          'editor.lineHighlightBackground': '#161b22',
+          'editorCursor.foreground': '#58a6ff',
+          'editor.selectionBackground': '#264f78',
+          'editorLineNumber.foreground': '#6e7681',
+          'editorLineNumber.activeForeground': '#c9d1d9',
+        },
+      });
+
+      init();
+    });
+
+    // Initialize with welcome cells
     function init() {
       addCell('code', '(define fib (intent "fibonacci"))');
       addCell('code', '(fib 10)');
@@ -648,12 +749,84 @@ export function replPage(): string {
       };
       cells.push(cell);
       renderCells();
-      focusCell(id);
+      // Small delay to let DOM update, then create editor
+      setTimeout(() => {
+        createEditor(id, content);
+        focusCell(id);
+      }, 10);
       return id;
+    }
+
+    // Create Monaco editor for a cell
+    function createEditor(cellId, content) {
+      if (!monaco) return;
+
+      const container = document.getElementById('editor-' + cellId);
+      if (!container || editors[cellId]) return;
+
+      const editor = monaco.editor.create(container, {
+        value: content || '',
+        language: 'prometheus-lisp',
+        theme: 'prometheus-dark',
+        minimap: { enabled: false },
+        lineNumbers: 'off',
+        glyphMargin: false,
+        folding: false,
+        lineDecorationsWidth: 8,
+        lineNumbersMinChars: 0,
+        renderLineHighlight: 'none',
+        scrollBeyondLastLine: false,
+        automaticLayout: true,
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', monospace",
+        padding: { top: 12, bottom: 12 },
+        scrollbar: {
+          vertical: 'hidden',
+          horizontal: 'auto',
+          useShadows: false,
+        },
+        overviewRulerLanes: 0,
+        hideCursorInOverviewRuler: true,
+        overviewRulerBorder: false,
+      });
+
+      // Update cell content on change
+      editor.onDidChangeModelContent(() => {
+        const cell = cells.find(c => c.id === cellId);
+        if (cell) cell.content = editor.getValue();
+      });
+
+      // Handle Shift+Enter to run
+      editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
+        runCell(cellId);
+      });
+
+      // Focus handling
+      editor.onDidFocusEditorText(() => {
+        activeCell = cellId;
+        document.querySelectorAll('.cell').forEach(el => {
+          el.classList.toggle('active', el.dataset.id === cellId);
+        });
+      });
+
+      // Auto-resize based on content
+      const updateHeight = () => {
+        const contentHeight = Math.max(80, Math.min(400, editor.getContentHeight()));
+        container.style.height = contentHeight + 'px';
+        editor.layout();
+      };
+      editor.onDidContentSizeChange(updateHeight);
+      updateHeight();
+
+      editors[cellId] = editor;
     }
 
     // Remove a cell
     function removeCell(id) {
+      if (editors[id]) {
+        editors[id].dispose();
+        delete editors[id];
+      }
       cells = cells.filter(c => c.id !== id);
       renderCells();
     }
@@ -664,14 +837,33 @@ export function replPage(): string {
       document.querySelectorAll('.cell').forEach(el => {
         el.classList.toggle('active', el.dataset.id === id);
       });
-      const textarea = document.querySelector(\`.cell[data-id="\${id}"] .code-textarea\`);
-      if (textarea) textarea.focus();
+      if (editors[id]) {
+        editors[id].focus();
+      }
     }
 
     // Render all cells
     function renderCells() {
       const container = document.getElementById('cells');
+
+      // Dispose old editors
+      Object.keys(editors).forEach(id => {
+        if (!cells.find(c => c.id === id)) {
+          editors[id].dispose();
+          delete editors[id];
+        }
+      });
+
       container.innerHTML = cells.map(cell => renderCell(cell)).join('');
+
+      // Recreate editors
+      setTimeout(() => {
+        cells.forEach(cell => {
+          if (!editors[cell.id]) {
+            createEditor(cell.id, cell.content);
+          }
+        });
+      }, 10);
     }
 
     // Render a single cell
@@ -695,12 +887,7 @@ export function replPage(): string {
             </div>
           </div>
           <div class="cell-editor">
-            <textarea
-              class="code-textarea mono"
-              placeholder="Enter LISP code or intent..."
-              onkeydown="handleKeydown(event, '\${cell.id}')"
-              oninput="updateCellContent('\${cell.id}', this.value)"
-            >\${escapeHtml(cell.content)}</textarea>
+            <div class="editor-container" id="editor-\${cell.id}" data-content="\${escapeHtml(cell.content)}"></div>
           </div>
           \${outputHtml}
         </div>
@@ -759,14 +946,6 @@ export function replPage(): string {
     function updateCellContent(id, content) {
       const cell = cells.find(c => c.id === id);
       if (cell) cell.content = content;
-    }
-
-    // Handle keyboard shortcuts
-    function handleKeydown(event, cellId) {
-      if (event.key === 'Enter' && event.shiftKey) {
-        event.preventDefault();
-        runCell(cellId);
-      }
     }
 
     // Run a cell
