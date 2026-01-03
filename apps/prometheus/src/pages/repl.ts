@@ -1012,6 +1012,33 @@ export function replPage(): string {
         env.define('ceil', Math.ceil);
         env.define('round', Math.round);
 
+        // String operations
+        env.define('string-length', s => s.length);
+        env.define('string-concat', (...a) => a.map(String).join(''));
+        env.define('substring', (s, start, end) => end === undefined ? s.slice(start) : s.slice(start, end));
+        env.define('char-at', (s, i) => s[i]);
+        env.define('string-upcase', s => s.toUpperCase());
+        env.define('string-downcase', s => s.toLowerCase());
+        env.define('string-split', (s, delim = ' ') => s.split(delim));
+        env.define('string-join', (lst, delim = '') => lst.map(String).join(delim));
+        env.define('string-trim', s => s.trim());
+
+        // String conversions
+        env.define('string->list', s => [...s]);
+        env.define('list->string', lst => lst.map(String).join(''));
+        env.define('string->number', s => s.includes('.') ? parseFloat(s) : parseInt(s, 10));
+        env.define('number->string', n => String(n));
+
+        // String search
+        env.define('string-contains?', (s, sub) => s.includes(sub));
+        env.define('string-index-of', (s, sub) => s.indexOf(sub));
+        env.define('string-replace', (s, old, newStr) => s.replaceAll(old, newStr));
+
+        // String comparisons
+        env.define('string=?', (a, b) => a === b);
+        env.define('string<?', (a, b) => a < b);
+        env.define('string>?', (a, b) => a > b);
+
         // Stats
         env.define('wasm-stats', () => ({ ...self.stats }));
         env.define('wasm-cache-size', () => self.wasmCache.size);
@@ -1321,7 +1348,12 @@ export function replPage(): string {
                    'apply', 'eval', 'print', 'display', 'newline',
                    'eq?', 'equal?', 'null?', 'pair?', 'list?', 'number?', 'string?', 'symbol?',
                    'search', 'wasm-stats', 'wasm-cache-size', 'abs', 'mod', 'max', 'min',
-                   'fib', 'factorial', 'gcd', 'is_prime', 'fibonacci'],
+                   'fib', 'factorial', 'gcd', 'is_prime', 'fibonacci',
+                   'string-length', 'string-concat', 'substring', 'char-at',
+                   'string-upcase', 'string-downcase', 'string-split', 'string-join', 'string-trim',
+                   'string->list', 'list->string', 'string->number', 'number->string',
+                   'string-contains?', 'string-index-of', 'string-replace',
+                   'string=?', 'string<?', 'string>?'],
 
         tokenizer: {
           root: [
@@ -1345,7 +1377,7 @@ export function replPage(): string {
             [/(define|lambda|let|letrec|if|cond|else|and|or|not|quote|begin|do|case|import|export|require|load|intent|set!)(?![a-zA-Z0-9_\\-])/, 'keyword'],
 
             // Builtins
-            [/(map|filter|reduce|range|list|cons|car|cdr|first|rest|nth|length|append|reverse|sort|apply|eval|print|display|search|abs|mod|max|min|fib|factorial|gcd|fibonacci|is_prime)(?![a-zA-Z0-9_\\-])/, 'support.function'],
+            [/(map|filter|reduce|range|list|cons|car|cdr|first|rest|nth|length|append|reverse|sort|apply|eval|print|display|search|abs|mod|max|min|fib|factorial|gcd|fibonacci|is_prime|string-length|string-concat|substring|char-at|string-upcase|string-downcase|string-split|string-join|string-trim|string->list|list->string|string->number|number->string|string-contains\\?|string-index-of|string-replace|string=\\?|string<\\?|string>\\?)(?![a-zA-Z0-9_\\-])/, 'support.function'],
 
             // Boolean predicates
             [/(eq\\?|equal\\?|null\\?|pair\\?|list\\?|number\\?|string\\?|symbol\\?)/, 'support.function'],
