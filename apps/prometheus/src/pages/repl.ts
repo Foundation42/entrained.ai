@@ -1994,12 +1994,67 @@ export function replPage(): string {
       },
       {
         title: 'Mandelbrot',
-        desc: 'Per-pixel escape iteration',
+        desc: 'Fractal heatmap with auto-render',
         cells: [
+          '; Click "Render" to visualize!',
           '(define mandel (intent "mandelbrot escape iteration"))',
-          '(mandel 0.0 0.0 256)   ; in set -> 256',
-          '(mandel 0.5 0.5 256)   ; escapes quickly',
           '(mandel -0.75 0.1 256) ; near boundary'
+        ]
+      },
+      {
+        title: 'Merge Sort',
+        desc: 'Divide and conquer sorting',
+        cells: [
+          '(define msort (intent "merge sort"))',
+          '(msort (list 38 27 43 3 9 82 10))'
+        ]
+      },
+      {
+        title: 'Binary Search',
+        desc: 'O(log n) search in sorted arrays',
+        cells: [
+          '(define bsearch (intent "binary search"))',
+          '(define sorted (list 1 3 5 7 9 11 13 15))',
+          '(bsearch sorted 7)  ; returns index 3',
+          '(bsearch sorted 4)  ; returns -1 (not found)'
+        ]
+      },
+      {
+        title: 'Math Functions',
+        desc: 'Combine multiple WASM functions',
+        cells: [
+          '(define abs (intent "absolute value"))',
+          '(define gcd (intent "gcd"))',
+          '(map abs (list -5 3 -2 7 -1))',
+          '(reduce gcd (list 48 36 24) 0)'
+        ]
+      },
+      {
+        title: 'Bubble Sort',
+        desc: 'Classic O(n²) sorting',
+        cells: [
+          '(define bsort (intent "bubble sort"))',
+          '(bsort (list 5 1 4 2 8 3 7 6))'
+        ]
+      },
+      {
+        title: 'Array Operations',
+        desc: 'Find min, max, and count',
+        cells: [
+          '(define find-max (intent "find maximum"))',
+          '(define find-min (intent "find minimum"))',
+          '(define data (list 42 17 93 8 56 71))',
+          '(list (find-min data) (find-max data))'
+        ]
+      },
+      {
+        title: 'Composing Functions',
+        desc: 'Build complex operations from intents',
+        cells: [
+          '(define fib (intent "fibonacci"))',
+          '(define prime? (intent "is prime"))',
+          '; Which fibonacci numbers are prime?',
+          '(filter prime? (map fib (range 2 20)))'
         ]
       }
     ];
