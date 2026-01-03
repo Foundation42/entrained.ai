@@ -2166,7 +2166,7 @@ export function replPage(): string {
         cells: [
           '(define fib (intent "fibonacci"))',
           '(define prime? (intent "is prime"))',
-          '; Which fibonacci numbers are prime?\n(filter prime? (map fib (range 2 20)))'
+          '; Which fibonacci numbers are prime?\\n(filter prime? (map fib (range 2 20)))'
         ]
       }
     ];
