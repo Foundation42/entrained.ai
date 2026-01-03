@@ -283,6 +283,11 @@ export function replPage(): string {
       height: auto;
     }
 
+    .cell-output-wrapper[style*="height"] .cell-output {
+      max-height: none;
+      height: 100%;
+    }
+
     .output-resize {
       border-radius: 0 0 8px 8px;
     }
