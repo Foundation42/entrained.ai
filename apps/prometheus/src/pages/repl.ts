@@ -2162,6 +2162,15 @@ export function replPage(): string {
         ]
       },
       {
+        title: 'Julia Set',
+        desc: 'Related fractal with different constant',
+        cells: [
+          '; Julia set: iterate z = z² + c for each point z\\n(define julia (intent "julia set escape iteration, takes zx zy cx cy max_iter"))',
+          '; Try different c values for different shapes\\n(julia 0.0 0.0 -0.7 0.27015 256)',
+          '(julia 0.5 0.5 -0.7 0.27015 256)'
+        ]
+      },
+      {
         title: 'Merge Sort',
         desc: 'Divide and conquer sorting',
         cells: [
