@@ -1022,8 +1022,19 @@ export function replPage(): string {
             return func.wasmFunc(...marshalledArgs);
           }
 
-          // No arrays - direct call
-          return func.wasmFunc(...args);
+          // No arrays - direct call, but handle BigInt/Number conversion
+          const convertedArgs = args.map(arg => {
+            if (typeof arg === 'bigint') {
+              // Convert BigInt to Number for i32 functions
+              // Check if function signature expects i32
+              const sig = func.signature || '';
+              if (sig.includes('i32') && !sig.includes('i64')) {
+                return Number(arg);
+              }
+            }
+            return arg;
+          });
+          return func.wasmFunc(...convertedArgs);
         }
         if (typeof func === 'function') return func(...args);
         throw new Error('Cannot apply: ' + func);
