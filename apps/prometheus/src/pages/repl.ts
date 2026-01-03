@@ -1546,46 +1546,62 @@ export function replPage(): string {
               const sem = val.semantic;
               const lines = [];
 
-              // Build Haskell-style signature
-              const inputTypes = (sem.inputs || []).map(i => i.semantic_type || i.wasm_type).join(' → ');
-              const outputType = sem.output?.semantic_type || sem.output?.wasm_type || 'void';
-              const signature = inputTypes ? \`\${word} :: \${inputTypes} → \${outputType}\` : \`\${word} :: \${outputType}\`;
-
-              lines.push('```haskell');
-              lines.push(signature);
-              lines.push('```');
+              // Function name and category
+              const category = sem.category ? \`[\${sem.category}]\` : '';
+              lines.push(\`**\${word}** \${category}\`);
 
               if (sem.description) {
                 lines.push('');
                 lines.push(sem.description);
               }
 
-              // Inputs with details
+              // Inputs with rich semantic types
               if (sem.inputs && sem.inputs.length > 0) {
                 lines.push('');
                 lines.push('**Inputs:**');
                 for (const inp of sem.inputs) {
-                  let line = \`- \\\`\${inp.name}\\\` : \${inp.semantic_type || inp.wasm_type}\`;
-                  if (inp.range) line += \` [\${inp.range[0]}, \${inp.range[1]}]\`;
-                  if (inp.default !== undefined) line += \` (default: \${inp.default})\`;
-                  if (inp.description) line += \` — \${inp.description}\`;
+                  const semType = inp.semantic_type || inp.wasm_type;
+                  let line = \`- **\${inp.name}** : \\\`\${semType}\\\`\`;
+                  if (inp.wasm_type && inp.wasm_type !== inp.semantic_type) {
+                    line += \` (\${inp.wasm_type})\`;
+                  }
                   lines.push(line);
+
+                  // Details on next line, indented
+                  const details = [];
+                  if (inp.range) details.push(\`range: [\${inp.range[0]}, \${inp.range[1]}]\`);
+                  if (inp.default !== undefined) details.push(\`default: \${inp.default}\`);
+                  if (details.length > 0 || inp.description) {
+                    let detailLine = '  ';
+                    if (details.length > 0) detailLine += details.join(', ');
+                    if (inp.description) detailLine += (details.length > 0 ? ' — ' : '') + inp.description;
+                    lines.push(detailLine);
+                  }
                 }
               }
 
-              // Output
+              // Output with semantic type
               if (sem.output) {
                 lines.push('');
-                lines.push(\`**Returns:** \${sem.output.semantic_type || sem.output.wasm_type}\${sem.output.description ? ' — ' + sem.output.description : ''}\`);
+                const outType = sem.output.semantic_type || sem.output.wasm_type;
+                let outLine = \`**Returns:** \\\`\${outType}\\\`\`;
+                if (sem.output.wasm_type && sem.output.wasm_type !== sem.output.semantic_type) {
+                  outLine += \` (\${sem.output.wasm_type})\`;
+                }
+                if (sem.output.range) outLine += \` [\${sem.output.range[0]}, \${sem.output.range[1]}]\`;
+                lines.push(outLine);
+                if (sem.output.description) lines.push('  ' + sem.output.description);
               }
 
               // Algorithm & complexity
-              if (sem.algorithm || sem.time_complexity || sem.space_complexity) {
+              if (sem.algorithm) {
                 lines.push('');
-                if (sem.algorithm) lines.push(\`**Algorithm:** \${sem.algorithm}\`);
-                if (sem.time_complexity || sem.space_complexity) {
-                  lines.push(\`**Complexity:** Time \${sem.time_complexity || '?'}, Space \${sem.space_complexity || '?'}\`);
-                }
+                lines.push(\`**Algorithm:** \${sem.algorithm}\`);
+              }
+              if (sem.time_complexity || sem.space_complexity) {
+                const time = sem.time_complexity || '?';
+                const space = sem.space_complexity || '?';
+                lines.push(\`**Complexity:** \${time} time, \${space} space\`);
               }
 
               // Examples
@@ -1604,10 +1620,15 @@ export function replPage(): string {
               const props = [];
               if (sem.pure) props.push('✓ pure');
               if (sem.deterministic) props.push('✓ deterministic');
-              if (sem.category) props.push(\`[\${sem.category}]\`);
               if (props.length > 0) {
                 lines.push('');
                 lines.push(props.join('  '));
+              }
+
+              // Renderer info if available
+              if (sem.renderer && sem.renderer.type !== 'value') {
+                lines.push('');
+                lines.push(\`**Renderer:** \${sem.renderer.type}\${sem.renderer.colormap ? ' (' + sem.renderer.colormap + ')' : ''}\`);
               }
 
               return {
