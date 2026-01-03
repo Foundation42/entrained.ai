@@ -632,12 +632,337 @@ export function replPage(): string {
   </div>
 
   <script>
-    // State
+    // ============================================
+    // LISP Evaluator (embedded)
+    // ============================================
+
+    class LispSymbol {
+      constructor(name) { this.name = name; }
+      toString() { return this.name; }
+    }
+
+    function tokenize(source) {
+      const pattern = /(\\(|\\)|"(?:[^"\\\\]|\\\\.)*"|;[^\\n]*|[^\\s()"';]+)/g;
+      const tokens = [];
+      let match;
+      while ((match = pattern.exec(source)) !== null) {
+        if (!match[0].startsWith(';')) tokens.push(match[0]);
+      }
+      return tokens;
+    }
+
+    function parseTokens(tokens, pos) {
+      if (pos >= tokens.length) throw new SyntaxError('Unexpected end of input');
+      const token = tokens[pos];
+      if (token === '(') {
+        const lst = [];
+        pos++;
+        while (pos < tokens.length && tokens[pos] !== ')') {
+          const [expr, newPos] = parseTokens(tokens, pos);
+          lst.push(expr);
+          pos = newPos;
+        }
+        if (pos >= tokens.length) throw new SyntaxError('Missing )');
+        return [lst, pos + 1];
+      }
+      if (token === ')') throw new SyntaxError('Unexpected )');
+      if (token.startsWith('"')) {
+        return [token.slice(1, -1).replace(/\\\\"/g, '"').replace(/\\\\n/g, '\\n'), pos + 1];
+      }
+      if (token.includes('.')) {
+        const n = parseFloat(token);
+        if (!isNaN(n)) return [n, pos + 1];
+      }
+      const n = parseInt(token, 10);
+      if (!isNaN(n)) return [n, pos + 1];
+      return [new LispSymbol(token), pos + 1];
+    }
+
+    function parseLisp(source) {
+      const tokens = tokenize(source);
+      const exprs = [];
+      let pos = 0;
+      while (pos < tokens.length) {
+        const [expr, newPos] = parseTokens(tokens, pos);
+        exprs.push(expr);
+        pos = newPos;
+      }
+      return exprs;
+    }
+
+    function exprToString(expr) {
+      if (Array.isArray(expr)) return '(' + expr.map(exprToString).join(' ') + ')';
+      if (typeof expr === 'string') return '"' + expr + '"';
+      if (expr instanceof LispSymbol) return expr.name;
+      return String(expr);
+    }
+
+    class Environment {
+      constructor(parent) { this.bindings = new Map(); this.parent = parent; }
+      get(name) {
+        if (this.bindings.has(name)) return this.bindings.get(name);
+        if (this.parent) return this.parent.get(name);
+        throw new Error('Undefined: ' + name);
+      }
+      set(name, val) {
+        if (this.bindings.has(name)) this.bindings.set(name, val);
+        else if (this.parent) this.parent.set(name, val);
+        else throw new Error('Cannot set undefined: ' + name);
+      }
+      define(name, val) { this.bindings.set(name, val); }
+    }
+
+    class Lambda {
+      constructor(params, body, env) { this.params = params; this.body = body; this.env = env; }
+      toString() { return '<lambda (' + this.params.map(p => p.name).join(' ') + ')>'; }
+    }
+
+    class LispEvaluator {
+      constructor() {
+        this.wasmCache = new Map();
+        this.globalEnv = this.createGlobalEnv();
+        this.stats = { intentsCompiled: 0, cacheHits: 0, totalCompileTimeMs: 0 };
+        this.outputBuffer = [];
+      }
+
+      createGlobalEnv() {
+        const env = new Environment();
+        const self = this;
+
+        // Arithmetic
+        env.define('+', (...a) => a.reduce((x, y) => x + y, 0));
+        env.define('-', (a, b) => b === undefined ? -a : a - b);
+        env.define('*', (...a) => a.reduce((x, y) => x * y, 1));
+        env.define('/', (a, b) => a / b);
+        env.define('mod', (a, b) => a % b);
+
+        // Comparison
+        env.define('=', (a, b) => a === b);
+        env.define('<', (a, b) => a < b);
+        env.define('>', (a, b) => a > b);
+        env.define('<=', (a, b) => a <= b);
+        env.define('>=', (a, b) => a >= b);
+
+        // Lists
+        env.define('list', (...a) => [...a]);
+        env.define('car', l => l[0]);
+        env.define('cdr', l => l.slice(1));
+        env.define('cons', (a, l) => [a, ...l]);
+        env.define('null?', l => l.length === 0);
+        env.define('length', l => l.length);
+        env.define('append', (...l) => l.flat());
+        env.define('reverse', l => [...l].reverse());
+        env.define('nth', (l, n) => l[n]);
+
+        // Higher-order
+        env.define('map', (f, l) => l.map(x => self.applyFunc(f, [x])));
+        env.define('filter', (f, l) => l.filter(x => self.applyFunc(f, [x])));
+        env.define('reduce', (f, l, init) => init !== undefined
+          ? l.reduce((a, x) => self.applyFunc(f, [a, x]), init)
+          : l.reduce((a, x) => self.applyFunc(f, [a, x])));
+
+        // Utilities
+        env.define('range', (...args) => {
+          let [start, end, step] = [0, 0, 1];
+          if (args.length === 1) end = args[0];
+          else if (args.length === 2) [start, end] = args;
+          else [start, end, step] = args;
+          const r = [];
+          for (let i = start; i < end; i += step) r.push(i);
+          return r;
+        });
+
+        env.define('print', (...a) => { self.outputBuffer.push(a.join(' ')); return a[a.length - 1]; });
+        env.define('not', x => !x);
+        env.define('number?', x => typeof x === 'number');
+        env.define('string?', x => typeof x === 'string');
+        env.define('list?', x => Array.isArray(x));
+        env.define('function?', x => typeof x === 'function' || x instanceof Lambda);
+
+        // Math
+        env.define('abs', Math.abs);
+        env.define('min', Math.min);
+        env.define('max', Math.max);
+        env.define('sqrt', Math.sqrt);
+        env.define('floor', Math.floor);
+        env.define('ceil', Math.ceil);
+        env.define('round', Math.round);
+
+        // Stats
+        env.define('wasm-stats', () => ({ ...self.stats }));
+        env.define('wasm-cache-size', () => self.wasmCache.size);
+
+        return env;
+      }
+
+      applyFunc(func, args) {
+        if (func instanceof Lambda) {
+          const localEnv = new Environment(func.env);
+          func.params.forEach((p, i) => localEnv.define(p.name, args[i]));
+          return this.evalSync(func.body, localEnv);
+        }
+        if (func && typeof func === 'object' && func.wasmFunc) {
+          return func.wasmFunc(...args);
+        }
+        if (typeof func === 'function') return func(...args);
+        throw new Error('Cannot apply: ' + func);
+      }
+
+      evalSync(expr, env) {
+        if (!env) env = this.globalEnv;
+        if (expr instanceof LispSymbol) return env.get(expr.name);
+        if (typeof expr === 'number' || typeof expr === 'string') return expr;
+        if (Array.isArray(expr) && expr.length === 0) return [];
+
+        if (Array.isArray(expr)) {
+          const head = expr[0];
+          if (head instanceof LispSymbol) {
+            const name = head.name;
+            if (name === 'quote') return expr[1];
+            if (name === 'if') {
+              return this.evalSync(expr[1], env)
+                ? this.evalSync(expr[2], env)
+                : expr.length > 3 ? this.evalSync(expr[3], env) : null;
+            }
+            if (name === 'and') {
+              for (let i = 1; i < expr.length; i++) if (!this.evalSync(expr[i], env)) return false;
+              return true;
+            }
+            if (name === 'or') {
+              for (let i = 1; i < expr.length; i++) { const v = this.evalSync(expr[i], env); if (v) return v; }
+              return false;
+            }
+            if (name === 'define') {
+              const sym = expr[1];
+              if (Array.isArray(sym)) {
+                const fn = sym[0], params = sym.slice(1), body = expr[2];
+                const lam = new Lambda(params, body, env);
+                env.define(fn.name, lam);
+                return lam;
+              }
+              const val = this.evalSync(expr[2], env);
+              env.define(sym.name, val);
+              return val;
+            }
+            if (name === 'lambda') return new Lambda(expr[1], expr[2], env);
+            if (name === 'let') {
+              const localEnv = new Environment(env);
+              for (const b of expr[1]) localEnv.define(b[0].name, this.evalSync(b[1], env));
+              return this.evalSync(expr[2], localEnv);
+            }
+            if (name === 'begin') {
+              let res = null;
+              for (let i = 1; i < expr.length; i++) res = this.evalSync(expr[i], env);
+              return res;
+            }
+            if (name === 'set!') {
+              const val = this.evalSync(expr[2], env);
+              env.set(expr[1].name, val);
+              return val;
+            }
+            if (name === 'cond') {
+              for (let i = 1; i < expr.length; i++) {
+                const clause = expr[i];
+                if (clause[0] instanceof LispSymbol && clause[0].name === 'else') return this.evalSync(clause[1], env);
+                if (this.evalSync(clause[0], env)) return this.evalSync(clause[1], env);
+              }
+              return null;
+            }
+          }
+          const func = this.evalSync(head, env);
+          const args = expr.slice(1).map(a => this.evalSync(a, env));
+          return this.applyFunc(func, args);
+        }
+        throw new Error('Cannot eval: ' + exprToString(expr));
+      }
+
+      async evalAsync(expr, env) {
+        if (!env) env = this.globalEnv;
+        if (expr instanceof LispSymbol) return env.get(expr.name);
+        if (typeof expr === 'number' || typeof expr === 'string') return expr;
+        if (Array.isArray(expr) && expr.length === 0) return [];
+
+        if (Array.isArray(expr)) {
+          const head = expr[0];
+          if (head instanceof LispSymbol && head.name === 'intent') {
+            const intentStr = await this.evalAsync(expr[1], env);
+            return this.handleIntent(intentStr);
+          }
+          if (head instanceof LispSymbol && head.name === 'define') {
+            const sym = expr[1];
+            if (Array.isArray(sym)) {
+              const fn = sym[0], params = sym.slice(1), body = expr[2];
+              const lam = new Lambda(params, body, env);
+              env.define(fn.name, lam);
+              return lam;
+            }
+            const val = await this.evalAsync(expr[2], env);
+            env.define(sym.name, val);
+            return val;
+          }
+          // For other forms, use sync eval
+          return this.evalSync(expr, env);
+        }
+        return this.evalSync(expr, env);
+      }
+
+      async handleIntent(intent) {
+        if (this.wasmCache.has(intent)) {
+          this.stats.cacheHits++;
+          return this.wasmCache.get(intent);
+        }
+
+        const start = Date.now();
+        const resp = await fetch('/api/compile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ intent }),
+        });
+        if (!resp.ok) throw new Error((await resp.json()).error || 'Compile failed');
+        const result = await resp.json();
+
+        const wasmResp = await fetch('/api/binary/' + result.hash);
+        if (!wasmResp.ok) throw new Error('Failed to fetch WASM');
+        const wasmBinary = await wasmResp.arrayBuffer();
+
+        const mod = await WebAssembly.instantiate(wasmBinary);
+        let wasmFunc = null, funcName = '';
+        for (const [n, exp] of Object.entries(mod.instance.exports)) {
+          if (typeof exp === 'function') { funcName = n; wasmFunc = exp; break; }
+        }
+        if (!wasmFunc) throw new Error('No function in WASM module');
+
+        this.stats.intentsCompiled++;
+        this.stats.totalCompileTimeMs += Date.now() - start;
+
+        const fn = { name: funcName, intent: result.expanded_intent, hash: result.hash,
+          signature: result.signature, size: result.size, wasmFunc, cached: result.cached };
+        this.wasmCache.set(intent, fn);
+        return fn;
+      }
+
+      async evalString(source) {
+        this.outputBuffer = [];
+        const exprs = parseLisp(source);
+        let result = null;
+        for (const expr of exprs) result = await this.evalAsync(expr);
+        return { result, output: this.outputBuffer };
+      }
+    }
+
+    // Global evaluator instance
+    const lisp = new LispEvaluator();
+
+    // ============================================
+    // REPL State
+    // ============================================
+
     let cells = [];
     let activeCell = null;
     let searchTimeout = null;
     let monaco = null;
     let editors = {};  // Map of cell id -> Monaco editor instance
+    let cellIdCounter = 0;  // Unique cell ID counter
 
     // Initialize Monaco and the app
     require.config({ paths: { vs: 'https://unpkg.com/monaco-editor@0.45.0/min/vs' } });
@@ -739,7 +1064,7 @@ export function replPage(): string {
 
     // Add a new cell
     function addCell(type = 'code', content = '') {
-      const id = 'cell-' + Date.now();
+      const id = 'cell-' + (++cellIdCounter);
       const cell = {
         id,
         type,
@@ -796,9 +1121,9 @@ export function replPage(): string {
         if (cell) cell.content = editor.getValue();
       });
 
-      // Handle Shift+Enter to run
+      // Handle Shift+Enter to run the active cell
       editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
-        runCell(cellId);
+        if (activeCell) runCell(activeCell);
       });
 
       // Focus handling
@@ -846,22 +1171,18 @@ export function replPage(): string {
     function renderCells() {
       const container = document.getElementById('cells');
 
-      // Dispose old editors
+      // Dispose ALL editors (innerHTML will destroy their DOM)
       Object.keys(editors).forEach(id => {
-        if (!cells.find(c => c.id === id)) {
-          editors[id].dispose();
-          delete editors[id];
-        }
+        editors[id].dispose();
+        delete editors[id];
       });
 
       container.innerHTML = cells.map(cell => renderCell(cell)).join('');
 
-      // Recreate editors
+      // Recreate editors for all cells
       setTimeout(() => {
         cells.forEach(cell => {
-          if (!editors[cell.id]) {
-            createEditor(cell.id, cell.content);
-          }
+          createEditor(cell.id, cell.content);
         });
       }, 10);
     }
@@ -899,12 +1220,18 @@ export function replPage(): string {
       if (!output) return '';
 
       let content = '';
+
+      // Show print output if any
+      if (output.printOutput) {
+        content += \`<div class="output-result" style="color: var(--text-secondary); margin-bottom: 0.5rem;">\${escapeHtml(output.printOutput)}</div>\`;
+      }
+
       if (output.type === 'error') {
-        content = \`<div class="output-error">\${escapeHtml(String(output.value))}</div>\`;
+        content += \`<div class="output-error">\${escapeHtml(String(output.value))}</div>\`;
       } else if (output.type === 'compile') {
         // Compilation result with function card
         const data = output.value;
-        content = \`
+        content += \`
           <div class="output-result">Compiled: \${escapeHtml(data.expanded_intent || '')}</div>
           <div class="fn-card">
             <img class="fn-icon" src="/api/icon/\${data.hash}" onerror="this.style.display='none'">
@@ -960,41 +1287,34 @@ export function replPage(): string {
       const start = Date.now();
 
       try {
-        // Parse and determine what kind of expression this is
         const code = cell.content.trim();
+        const { result, output } = await lisp.evalString(code);
 
-        // Check if this is a define with intent
-        if (code.includes('(intent')) {
-          // Extract the intent string
-          const intentMatch = code.match(/\\(intent\\s+"([^"]+)"\\)/);
-          if (intentMatch) {
-            const intent = intentMatch[1];
-            const result = await compileIntent(intent);
-            cell.output = {
-              type: 'compile',
-              value: result,
-              timing_ms: Date.now() - start,
-            };
-          }
-        } else if (code.startsWith('(search')) {
-          // Handle search
-          const queryMatch = code.match(/\\(search\\s+"([^"]+)"\\)/);
-          if (queryMatch) {
-            const results = await searchFunctions(queryMatch[1]);
-            cell.output = {
-              type: 'result',
-              value: results,
-              timing_ms: Date.now() - start,
-            };
-          }
-        } else {
-          // For now, show the code as-is (LISP eval would go here)
-          cell.output = {
-            type: 'result',
-            value: 'LISP evaluation coming soon! Try: (define fib (intent "fibonacci"))',
-            timing_ms: Date.now() - start,
+        // Determine output type based on result
+        let outputType = 'result';
+        let outputValue = result;
+
+        // Check if result is a WASM function (from intent)
+        if (result && typeof result === 'object' && result.wasmFunc) {
+          outputType = 'compile';
+          outputValue = {
+            hash: result.hash,
+            expanded_intent: result.intent,
+            signature: result.signature,
+            size: result.size,
+            cached: result.cached,
           };
         }
+
+        // Include any print output
+        const printOutput = output.length > 0 ? output.join('\\n') + '\\n' : '';
+
+        cell.output = {
+          type: outputType,
+          value: outputValue,
+          printOutput,
+          timing_ms: Date.now() - start,
+        };
 
         cell.status = 'success';
       } catch (error) {
@@ -1138,8 +1458,7 @@ export function replPage(): string {
         .replace(/"/g, '&quot;');
     }
 
-    // Initialize
-    init();
+    // Note: init() is called inside the Monaco require() callback
   </script>
 </body>
 </html>`;
