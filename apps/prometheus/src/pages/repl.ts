@@ -723,6 +723,69 @@ export function replPage(): string {
         this.globalEnv = this.createGlobalEnv();
         this.stats = { intentsCompiled: 0, cacheHits: 0, totalCompileTimeMs: 0 };
         this.outputBuffer = [];
+
+        // Shared WASM memory for modules that need imports
+        this.sharedMemory = new WebAssembly.Memory({ initial: 256 }); // 16MB
+        this.memoryOffset = 0;
+      }
+
+      // Reset memory allocator between top-level evaluations
+      resetMemory() {
+        this.memoryOffset = 0;
+      }
+
+      // Allocate space in WASM memory and copy array
+      allocArray(memory, arr, elemType = 'i64') {
+        const buffer = memory.buffer;
+        const bytesPerElem = (elemType === 'i64' || elemType === 'f64') ? 8 : 4;
+        const size = arr.length * bytesPerElem;
+
+        // Align to 8 bytes
+        this.memoryOffset = Math.ceil(this.memoryOffset / 8) * 8;
+        const ptr = this.memoryOffset;
+        this.memoryOffset += size;
+
+        // Ensure we have enough memory
+        const neededPages = Math.ceil((ptr + size) / 65536);
+        if (neededPages > memory.buffer.byteLength / 65536) {
+          memory.grow(neededPages - memory.buffer.byteLength / 65536 + 1);
+        }
+
+        // Copy data
+        if (elemType === 'i64') {
+          const view = new BigInt64Array(memory.buffer, ptr, arr.length);
+          for (let i = 0; i < arr.length; i++) view[i] = BigInt(Math.floor(arr[i]));
+        } else if (elemType === 'f64') {
+          const view = new Float64Array(memory.buffer, ptr, arr.length);
+          for (let i = 0; i < arr.length; i++) view[i] = arr[i];
+        } else {
+          const view = new Int32Array(memory.buffer, ptr, arr.length);
+          for (let i = 0; i < arr.length; i++) view[i] = Math.floor(arr[i]);
+        }
+
+        return ptr;
+      }
+
+      // Read array from WASM memory
+      readArray(memory, ptr, len, elemType = 'i64') {
+        if (elemType === 'i64') {
+          const view = new BigInt64Array(memory.buffer, ptr, len);
+          return Array.from(view, v => Number(v));
+        } else if (elemType === 'f64') {
+          return Array.from(new Float64Array(memory.buffer, ptr, len));
+        } else {
+          return Array.from(new Int32Array(memory.buffer, ptr, len));
+        }
+      }
+
+      // Parse signature to determine element type
+      getArrayElemType(signature) {
+        if (!signature) return 'i64';
+        // Look for patterns like (i32, i32) for ptr+len with i32 elements
+        // or (i64*, i32) etc. Default to i64 for safety
+        if (signature.includes('f64')) return 'f64';
+        if (signature.includes('i32') && !signature.includes('i64')) return 'i32';
+        return 'i64';
       }
 
       createGlobalEnv() {
@@ -802,6 +865,53 @@ export function replPage(): string {
           return this.evalSync(func.body, localEnv);
         }
         if (func && typeof func === 'object' && func.wasmFunc) {
+          // Check if we have array arguments that need marshalling
+          const hasArrayArg = args.some(a => Array.isArray(a));
+
+          if (hasArrayArg) {
+            const memory = func.memory || this.sharedMemory;
+            const elemType = this.getArrayElemType(func.signature);
+
+            // Handle single array argument -> (ptr, len) calling convention
+            if (args.length === 1 && Array.isArray(args[0])) {
+              const arr = args[0];
+              const ptr = this.allocArray(memory, arr, elemType);
+              const len = arr.length;
+
+              // Call WASM with (ptr, len)
+              func.wasmFunc(ptr, len);
+
+              // Read back result (assuming in-place modification for sorts)
+              return this.readArray(memory, ptr, len, elemType);
+            }
+
+            // Handle (array, value) -> (ptr, len, value) e.g., binary search
+            if (args.length === 2 && Array.isArray(args[0]) && !Array.isArray(args[1])) {
+              const arr = args[0];
+              const val = args[1];
+              const ptr = this.allocArray(memory, arr, elemType);
+              const len = arr.length;
+
+              // Call WASM with (ptr, len, val)
+              const result = func.wasmFunc(ptr, len, elemType === 'i64' ? BigInt(Math.floor(val)) : val);
+
+              // Return the result (e.g., index for binary search)
+              return typeof result === 'bigint' ? Number(result) : result;
+            }
+
+            // Fallback: marshal each array arg separately
+            const marshalledArgs = args.map(arg => {
+              if (Array.isArray(arg)) {
+                const ptr = this.allocArray(memory, arg, elemType);
+                return [ptr, arg.length];
+              }
+              return [arg];
+            }).flat();
+
+            return func.wasmFunc(...marshalledArgs);
+          }
+
+          // No arrays - direct call
           return func.wasmFunc(...args);
         }
         if (typeof func === 'function') return func(...args);
@@ -925,24 +1035,53 @@ export function replPage(): string {
         if (!wasmResp.ok) throw new Error('Failed to fetch WASM');
         const wasmBinary = await wasmResp.arrayBuffer();
 
-        const mod = await WebAssembly.instantiate(wasmBinary);
+        // Try to instantiate with memory import, fall back to without
+        let mod;
+        const imports = { env: { memory: this.sharedMemory } };
+        try {
+          mod = await WebAssembly.instantiate(wasmBinary, imports);
+        } catch (e) {
+          // Module might not need memory import
+          mod = await WebAssembly.instantiate(wasmBinary);
+        }
+
         let wasmFunc = null, funcName = '';
+        let memory = null;
+
         for (const [n, exp] of Object.entries(mod.instance.exports)) {
-          if (typeof exp === 'function') { funcName = n; wasmFunc = exp; break; }
+          if (typeof exp === 'function' && !wasmFunc) {
+            funcName = n;
+            wasmFunc = exp;
+          }
+          if (exp instanceof WebAssembly.Memory) {
+            memory = exp;
+          }
         }
         if (!wasmFunc) throw new Error('No function in WASM module');
+
+        // Use exported memory if available, otherwise use shared memory
+        memory = memory || this.sharedMemory;
 
         this.stats.intentsCompiled++;
         this.stats.totalCompileTimeMs += Date.now() - start;
 
-        const fn = { name: funcName, intent: result.expanded_intent, hash: result.hash,
-          signature: result.signature, size: result.size, wasmFunc, cached: result.cached };
+        const fn = {
+          name: funcName,
+          intent: result.expanded_intent,
+          hash: result.hash,
+          signature: result.signature,
+          size: result.size,
+          wasmFunc,
+          memory,
+          cached: result.cached
+        };
         this.wasmCache.set(intent, fn);
         return fn;
       }
 
       async evalString(source) {
         this.outputBuffer = [];
+        this.resetMemory(); // Reset memory allocator for each evaluation
         const exprs = parseLisp(source);
         let result = null;
         for (const expr of exprs) result = await this.evalAsync(expr);
