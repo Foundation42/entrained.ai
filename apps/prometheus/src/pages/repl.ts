@@ -827,7 +827,8 @@ export function replPage(): string {
       }
       if (token === ')') throw new SyntaxError('Unexpected )');
       if (token.startsWith('"')) {
-        return [token.slice(1, -1).replace(/\\\\"/g, '"').replace(/\\\\n/g, '\\n'), pos + 1];
+        // Handle escape sequences: \\ -> \, \" -> ", \n -> newline
+        return [token.slice(1, -1).replace(/\\\\/g, '\\').replace(/\\"/g, '"').replace(/\\n/g, '\n'), pos + 1];
       }
       if (token.includes('.')) {
         const n = parseFloat(token);
@@ -2510,6 +2511,15 @@ export function replPage(): string {
           '(string-split "a,b,c,d" ",")',
           '(string-join (list "x" "y" "z") "-")',
           '(map string-upcase (string-split "the quick brown fox" " "))'
+        ]
+      },
+      {
+        title: 'Regex',
+        desc: 'Regular expression matching',
+        cells: [
+          '(regex-match-all "\\\\d+" "a1b22c333")',
+          '(regex-replace "\\\\s+" "-" "hello   world")',
+          '(filter (lambda (s) (regex-test "^a" s)) (list "apple" "banana" "avocado"))'
         ]
       },
       {
