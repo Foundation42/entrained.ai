@@ -827,8 +827,8 @@ export function replPage(): string {
       }
       if (token === ')') throw new SyntaxError('Unexpected )');
       if (token.startsWith('"')) {
-        // Handle escape sequences: \\ -> \, \" -> ", \n -> newline
-        return [token.slice(1, -1).replace(/\\\\/g, '\\').replace(/\\"/g, '"').replace(/\\n/g, '\n'), pos + 1];
+        // Handle escape sequences: \\\\ -> \\, \\" -> ", \\n -> newline
+        return [token.slice(1, -1).replace(/\\\\\\\\/g, '\\\\').replace(/\\\\"/g, '"').replace(/\\\\n/g, '\\n'), pos + 1];
       }
       if (token.includes('.')) {
         const n = parseFloat(token);
