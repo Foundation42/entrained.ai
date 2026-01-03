@@ -1039,6 +1039,13 @@ export function replPage(): string {
         env.define('string<?', (a, b) => a < b);
         env.define('string>?', (a, b) => a > b);
 
+        // Regex operations
+        env.define('regex-test', (pattern, s) => new RegExp(pattern).test(s));
+        env.define('regex-match', (pattern, s) => { const m = s.match(new RegExp(pattern)); return m ? m[0] : false; });
+        env.define('regex-match-all', (pattern, s) => [...s.matchAll(new RegExp(pattern, 'g'))].map(m => m[0]));
+        env.define('regex-replace', (pattern, repl, s) => s.replace(new RegExp(pattern, 'g'), repl));
+        env.define('regex-split', (pattern, s) => s.split(new RegExp(pattern)));
+
         // Stats
         env.define('wasm-stats', () => ({ ...self.stats }));
         env.define('wasm-cache-size', () => self.wasmCache.size);
@@ -1353,7 +1360,8 @@ export function replPage(): string {
                    'string-upcase', 'string-downcase', 'string-split', 'string-join', 'string-trim',
                    'string->list', 'list->string', 'string->number', 'number->string',
                    'string-contains?', 'string-index-of', 'string-replace',
-                   'string=?', 'string<?', 'string>?'],
+                   'string=?', 'string<?', 'string>?',
+                   'regex-test', 'regex-match', 'regex-match-all', 'regex-replace', 'regex-split'],
 
         tokenizer: {
           root: [
@@ -1377,7 +1385,7 @@ export function replPage(): string {
             [/(define|lambda|let|letrec|if|cond|else|and|or|not|quote|begin|do|case|import|export|require|load|intent|set!)(?![a-zA-Z0-9_\\-])/, 'keyword'],
 
             // Builtins
-            [/(map|filter|reduce|range|list|cons|car|cdr|first|rest|nth|length|append|reverse|sort|apply|eval|print|display|search|abs|mod|max|min|fib|factorial|gcd|fibonacci|is_prime|string-length|string-concat|substring|char-at|string-upcase|string-downcase|string-split|string-join|string-trim|string->list|list->string|string->number|number->string|string-contains\\?|string-index-of|string-replace|string=\\?|string<\\?|string>\\?)(?![a-zA-Z0-9_\\-])/, 'support.function'],
+            [/(map|filter|reduce|range|list|cons|car|cdr|first|rest|nth|length|append|reverse|sort|apply|eval|print|display|search|abs|mod|max|min|fib|factorial|gcd|fibonacci|is_prime|string-length|string-concat|substring|char-at|string-upcase|string-downcase|string-split|string-join|string-trim|string->list|list->string|string->number|number->string|string-contains\\?|string-index-of|string-replace|string=\\?|string<\\?|string>\\?|regex-test|regex-match|regex-match-all|regex-replace|regex-split)(?![a-zA-Z0-9_\\-])/, 'support.function'],
 
             // Boolean predicates
             [/(eq\\?|equal\\?|null\\?|pair\\?|list\\?|number\\?|string\\?|symbol\\?)/, 'support.function'],
