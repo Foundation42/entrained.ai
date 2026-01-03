@@ -726,12 +726,13 @@ export function replPage(): string {
 
         // Shared WASM memory for modules that need imports
         this.sharedMemory = new WebAssembly.Memory({ initial: 256 }); // 16MB
-        this.memoryOffset = 0;
+        this.heapBase = 65536; // Start after first page to avoid WASM internals
+        this.memoryOffset = this.heapBase;
       }
 
       // Reset memory allocator between top-level evaluations
       resetMemory() {
-        this.memoryOffset = 0;
+        this.memoryOffset = this.heapBase;
       }
 
       // Allocate space in WASM memory and copy array
@@ -871,6 +872,10 @@ export function replPage(): string {
           if (hasArrayArg) {
             const memory = func.memory || this.sharedMemory;
             const elemType = this.getArrayElemType(func.signature);
+            // Use function's heap base if available
+            if (func.heapBase) {
+              this.memoryOffset = Math.max(this.memoryOffset, func.heapBase);
+            }
 
             // Handle single array argument -> (ptr, len) calling convention
             if (args.length === 1 && Array.isArray(args[0])) {
@@ -1047,6 +1052,7 @@ export function replPage(): string {
 
         let wasmFunc = null, funcName = '';
         let memory = null;
+        let heapBase = this.heapBase;
 
         for (const [n, exp] of Object.entries(mod.instance.exports)) {
           if (typeof exp === 'function' && !wasmFunc) {
@@ -1055,6 +1061,13 @@ export function replPage(): string {
           }
           if (exp instanceof WebAssembly.Memory) {
             memory = exp;
+          }
+          // Check for heap base marker (common in WASM modules)
+          if (n === '__heap_base' && exp instanceof WebAssembly.Global) {
+            heapBase = exp.value;
+          }
+          if (n === '__data_end' && exp instanceof WebAssembly.Global) {
+            heapBase = Math.max(heapBase, exp.value);
           }
         }
         if (!wasmFunc) throw new Error('No function in WASM module');
@@ -1073,6 +1086,7 @@ export function replPage(): string {
           size: result.size,
           wasmFunc,
           memory,
+          heapBase,
           cached: result.cached
         };
         this.wasmCache.set(intent, fn);
