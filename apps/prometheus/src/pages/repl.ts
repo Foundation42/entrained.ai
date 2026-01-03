@@ -340,6 +340,22 @@ export function replPage(): string {
       flex: 1;
     }
 
+    /* Mandelbrot canvas */
+    .mandelbrot-canvas {
+      width: 100%;
+      max-width: 600px;
+      aspect-ratio: 3/2;
+      border-radius: 6px;
+      background: #000;
+      cursor: crosshair;
+    }
+
+    .mandelbrot-info {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+    }
+
     .fn-name {
       font-weight: 500;
       color: var(--accent);
@@ -1447,6 +1463,9 @@ export function replPage(): string {
       } else if (output.type === 'compile') {
         // Compilation result with function card
         const data = output.value;
+        const isMandel = data.expanded_intent && data.expanded_intent.toLowerCase().includes('mandelbrot');
+        const canvasId = 'mandel-' + data.hash;
+
         content += \`
           <div class="output-result">Compiled: \${escapeHtml(data.expanded_intent || '')}</div>
           <div class="fn-card">
@@ -1459,7 +1478,9 @@ export function replPage(): string {
           <div class="output-meta">
             <span>\${data.size} bytes</span>
             <span>\${data.cached ? 'cached' : 'compiled'}</span>
+            \${isMandel ? '<button class="cell-btn" onclick="triggerMandelbrotRender(\\'' + data.hash + '\\', \\'' + canvasId + '\\')">Render</button>' : ''}
           </div>
+          \${isMandel ? '<canvas id="' + canvasId + '" class="mandelbrot-canvas" style="display:none;margin-top:0.5rem;"></canvas><div id="' + canvasId + '-info" class="mandelbrot-info"></div>' : ''}
         \`;
       } else {
         content = \`<div class="output-result">\${escapeHtml(formatValue(output.value))}</div>\`;
@@ -1491,6 +1512,90 @@ export function replPage(): string {
         return JSON.stringify(value, (k, v) => typeof v === 'bigint' ? String(v) : v, 2);
       }
       return String(value);
+    }
+
+    // Viridis-like colormap for mandelbrot
+    function iterationToColor(iter, maxIter) {
+      if (iter >= maxIter) return [0, 0, 0]; // Black for points in set
+      const t = iter / maxIter;
+      // Simplified viridis-ish gradient
+      const r = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 3)));
+      const g = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 2)));
+      const b = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 1)));
+      return [
+        Math.max(0, Math.min(255, r + Math.floor(70 * t))),
+        Math.max(0, Math.min(255, g + Math.floor(30 * t))),
+        Math.max(0, Math.min(255, 100 + b))
+      ];
+    }
+
+    // Render mandelbrot to canvas
+    function renderMandelbrot(canvasId, mandelFunc, maxIter = 256) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+
+      const width = canvas.width = 600;
+      const height = canvas.height = 400;
+      const ctx = canvas.getContext('2d');
+      const imageData = ctx.createImageData(width, height);
+
+      // Mandelbrot bounds
+      const xMin = -2.5, xMax = 1.0;
+      const yMin = -1.2, yMax = 1.2;
+
+      for (let py = 0; py < height; py++) {
+        for (let px = 0; px < width; px++) {
+          const cx = xMin + (px / width) * (xMax - xMin);
+          const cy = yMin + (py / height) * (yMax - yMin);
+
+          const iter = mandelFunc(cx, cy, maxIter);
+          const [r, g, b] = iterationToColor(iter, maxIter);
+
+          const idx = (py * width + px) * 4;
+          imageData.data[idx] = r;
+          imageData.data[idx + 1] = g;
+          imageData.data[idx + 2] = b;
+          imageData.data[idx + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    // Check if a function is mandelbrot-like
+    function isMandelbrotFunc(fn) {
+      if (!fn || !fn.intent) return false;
+      const intent = fn.intent.toLowerCase();
+      return intent.includes('mandelbrot') || intent.includes('mandel');
+    }
+
+    // Store mandelbrot functions for rendering
+    let mandelbrotFuncs = {};
+
+    // Trigger mandelbrot rendering
+    async function triggerMandelbrotRender(hash, canvasId) {
+      const canvas = document.getElementById(canvasId);
+      const info = document.getElementById(canvasId + '-info');
+      if (!canvas) return;
+
+      // Show canvas
+      canvas.style.display = 'block';
+      if (info) info.textContent = 'Rendering...';
+
+      // Get the function from cache
+      const fn = Array.from(lisp.wasmCache.values()).find(f => f.hash === hash);
+      if (!fn) {
+        if (info) info.textContent = 'Error: Function not found in cache';
+        return;
+      }
+
+      // Render asynchronously to not block UI
+      setTimeout(() => {
+        const start = Date.now();
+        renderMandelbrot(canvasId, fn.wasmFunc, 256);
+        const elapsed = Date.now() - start;
+        if (info) info.textContent = \`Rendered 600x400 = 240,000 WASM calls in \${elapsed}ms\`;
+      }, 10);
     }
 
     // Update cell content
