@@ -1432,6 +1432,92 @@ export function replPage(): string {
         },
       });
 
+      // Register completion provider for builtins
+      monaco.languages.registerCompletionItemProvider('prometheus-lisp', {
+        provideCompletionItems: (model, position) => {
+          const builtins = [
+            // Core
+            { label: 'define', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'define ', detail: 'Define a variable or function' },
+            { label: 'lambda', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'lambda (', detail: 'Anonymous function' },
+            { label: 'intent', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'intent "', detail: 'Compile WASM from natural language' },
+            { label: 'if', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'if ', detail: 'Conditional expression' },
+            { label: 'let', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'let ((', detail: 'Local bindings' },
+
+            // Lists
+            { label: 'list', kind: monaco.languages.CompletionItemKind.Function, insertText: 'list ', detail: 'Create a list' },
+            { label: 'map', kind: monaco.languages.CompletionItemKind.Function, insertText: 'map ', detail: '(map fn list) - Apply fn to each element' },
+            { label: 'filter', kind: monaco.languages.CompletionItemKind.Function, insertText: 'filter ', detail: '(filter pred list) - Keep elements matching predicate' },
+            { label: 'reduce', kind: monaco.languages.CompletionItemKind.Function, insertText: 'reduce ', detail: '(reduce fn list init) - Fold list with fn' },
+            { label: 'range', kind: monaco.languages.CompletionItemKind.Function, insertText: 'range ', detail: '(range end) or (range start end)' },
+            { label: 'car', kind: monaco.languages.CompletionItemKind.Function, insertText: 'car ', detail: 'First element of list' },
+            { label: 'cdr', kind: monaco.languages.CompletionItemKind.Function, insertText: 'cdr ', detail: 'Rest of list (all but first)' },
+            { label: 'cons', kind: monaco.languages.CompletionItemKind.Function, insertText: 'cons ', detail: '(cons x list) - Prepend x to list' },
+            { label: 'append', kind: monaco.languages.CompletionItemKind.Function, insertText: 'append ', detail: 'Concatenate lists' },
+            { label: 'length', kind: monaco.languages.CompletionItemKind.Function, insertText: 'length ', detail: 'Length of list' },
+            { label: 'reverse', kind: monaco.languages.CompletionItemKind.Function, insertText: 'reverse ', detail: 'Reverse a list' },
+            { label: 'nth', kind: monaco.languages.CompletionItemKind.Function, insertText: 'nth ', detail: '(nth list n) - Get nth element' },
+
+            // String operations
+            { label: 'string-length', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-length ', detail: '(string-length s) - Length of string' },
+            { label: 'string-concat', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-concat ', detail: '(string-concat s1 s2 ...) - Concatenate strings' },
+            { label: 'substring', kind: monaco.languages.CompletionItemKind.Function, insertText: 'substring ', detail: '(substring s start end) - Extract substring' },
+            { label: 'char-at', kind: monaco.languages.CompletionItemKind.Function, insertText: 'char-at ', detail: '(char-at s index) - Get character at index' },
+            { label: 'string-upcase', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-upcase ', detail: '(string-upcase s) - Convert to uppercase' },
+            { label: 'string-downcase', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-downcase ', detail: '(string-downcase s) - Convert to lowercase' },
+            { label: 'string-split', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-split ', detail: '(string-split s delim) - Split string by delimiter' },
+            { label: 'string-join', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-join ', detail: '(string-join list delim) - Join list with delimiter' },
+            { label: 'string-trim', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-trim ', detail: '(string-trim s) - Remove leading/trailing whitespace' },
+            { label: 'string-replace', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-replace ', detail: '(string-replace s old new) - Replace occurrences' },
+            { label: 'string-contains?', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-contains? ', detail: '(string-contains? s sub) - Check if contains substring' },
+            { label: 'string-index-of', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string-index-of ', detail: '(string-index-of s sub) - Find index of substring' },
+            { label: 'string->list', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string->list ', detail: '(string->list s) - Convert string to char list' },
+            { label: 'list->string', kind: monaco.languages.CompletionItemKind.Function, insertText: 'list->string ', detail: '(list->string chars) - Convert char list to string' },
+            { label: 'string->number', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string->number ', detail: '(string->number s) - Parse string to number' },
+            { label: 'number->string', kind: monaco.languages.CompletionItemKind.Function, insertText: 'number->string ', detail: '(number->string n) - Convert number to string' },
+
+            // Regex
+            { label: 'regex-test', kind: monaco.languages.CompletionItemKind.Function, insertText: 'regex-test ', detail: '(regex-test pattern s) - Test if pattern matches' },
+            { label: 'regex-match', kind: monaco.languages.CompletionItemKind.Function, insertText: 'regex-match ', detail: '(regex-match pattern s) - Find first match' },
+            { label: 'regex-match-all', kind: monaco.languages.CompletionItemKind.Function, insertText: 'regex-match-all ', detail: '(regex-match-all pattern s) - Find all matches' },
+            { label: 'regex-replace', kind: monaco.languages.CompletionItemKind.Function, insertText: 'regex-replace ', detail: '(regex-replace pattern repl s) - Replace matches' },
+            { label: 'regex-split', kind: monaco.languages.CompletionItemKind.Function, insertText: 'regex-split ', detail: '(regex-split pattern s) - Split by pattern' },
+
+            // Math
+            { label: 'abs', kind: monaco.languages.CompletionItemKind.Function, insertText: 'abs ', detail: 'Absolute value' },
+            { label: 'min', kind: monaco.languages.CompletionItemKind.Function, insertText: 'min ', detail: 'Minimum of arguments' },
+            { label: 'max', kind: monaco.languages.CompletionItemKind.Function, insertText: 'max ', detail: 'Maximum of arguments' },
+            { label: 'sqrt', kind: monaco.languages.CompletionItemKind.Function, insertText: 'sqrt ', detail: 'Square root' },
+            { label: 'floor', kind: monaco.languages.CompletionItemKind.Function, insertText: 'floor ', detail: 'Round down' },
+            { label: 'ceil', kind: monaco.languages.CompletionItemKind.Function, insertText: 'ceil ', detail: 'Round up' },
+            { label: 'round', kind: monaco.languages.CompletionItemKind.Function, insertText: 'round ', detail: 'Round to nearest' },
+            { label: 'mod', kind: monaco.languages.CompletionItemKind.Function, insertText: 'mod ', detail: 'Modulo (remainder)' },
+
+            // Type checks
+            { label: 'number?', kind: monaco.languages.CompletionItemKind.Function, insertText: 'number? ', detail: 'Check if number' },
+            { label: 'string?', kind: monaco.languages.CompletionItemKind.Function, insertText: 'string? ', detail: 'Check if string' },
+            { label: 'list?', kind: monaco.languages.CompletionItemKind.Function, insertText: 'list? ', detail: 'Check if list' },
+            { label: 'null?', kind: monaco.languages.CompletionItemKind.Function, insertText: 'null? ', detail: 'Check if empty list' },
+            { label: 'function?', kind: monaco.languages.CompletionItemKind.Function, insertText: 'function? ', detail: 'Check if function' },
+
+            // Introspection
+            { label: 'wasm-stats', kind: monaco.languages.CompletionItemKind.Function, insertText: 'wasm-stats', detail: 'Show WASM compilation stats' },
+            { label: 'wasm-cache-size', kind: monaco.languages.CompletionItemKind.Function, insertText: 'wasm-cache-size', detail: 'Number of cached functions' },
+          ];
+
+          return {
+            suggestions: builtins.map(b => ({
+              ...b,
+              range: {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: position.column,
+                endColumn: position.column
+              }
+            }))
+          };
+        }
+      });
+
       init();
     });
 
