@@ -269,6 +269,14 @@ export function replPage(): string {
       background: var(--accent);
     }
 
+    .cell-output-wrapper {
+      overflow: auto;
+    }
+
+    .output-resize {
+      border-radius: 0 0 8px 8px;
+    }
+
     /* Monaco overrides */
     .monaco-editor,
     .monaco-editor .overflow-guard {
@@ -1387,9 +1395,23 @@ export function replPage(): string {
         if (e.target.classList.contains('cell-resize')) {
           e.preventDefault();
           const cellId = e.target.dataset.cell;
-          const container = document.getElementById('editor-' + cellId);
+          const isOutput = e.target.dataset.target === 'output';
+
+          let container;
+          if (isOutput) {
+            container = document.getElementById('output-' + cellId);
+          } else {
+            container = document.getElementById('editor-' + cellId);
+          }
+
           if (container) {
-            resizing = { cellId, container, startY: e.clientY, startHeight: container.offsetHeight };
+            resizing = {
+              cellId,
+              container,
+              startY: e.clientY,
+              startHeight: container.offsetHeight,
+              isOutput
+            };
             e.target.classList.add('dragging');
             document.body.style.cursor = 'ns-resize';
             document.body.style.userSelect = 'none';
@@ -1400,10 +1422,12 @@ export function replPage(): string {
       document.addEventListener('mousemove', (e) => {
         if (resizing) {
           const delta = e.clientY - resizing.startY;
-          const newHeight = Math.max(60, resizing.startHeight + delta);
+          const minHeight = resizing.isOutput ? 100 : 60;
+          const newHeight = Math.max(minHeight, resizing.startHeight + delta);
           resizing.container.style.height = newHeight + 'px';
-          // Update Monaco editor layout
-          if (editors[resizing.cellId]) {
+          resizing.container.style.minHeight = newHeight + 'px';
+          // Update Monaco editor layout if resizing editor
+          if (!resizing.isOutput && editors[resizing.cellId]) {
             editors[resizing.cellId].layout();
           }
         }
@@ -1548,6 +1572,7 @@ export function replPage(): string {
     function renderCell(cell) {
       const statusClass = cell.status !== 'idle' ? cell.status : '';
       const outputHtml = cell.output ? renderOutput(cell.output) : '';
+      const hasOutput = !!cell.output;
 
       return \`
         <div class="cell \${cell.id === activeCell ? 'active' : ''}" data-id="\${cell.id}" onclick="focusCell('\${cell.id}')">
@@ -1568,7 +1593,10 @@ export function replPage(): string {
             <div class="editor-container" id="editor-\${cell.id}" data-content="\${escapeHtml(cell.content)}"></div>
             <div class="cell-resize" data-cell="\${cell.id}"></div>
           </div>
-          \${outputHtml}
+          <div class="cell-output-wrapper" id="output-\${cell.id}">
+            \${outputHtml}
+          </div>
+          \${hasOutput ? '<div class="cell-resize output-resize" data-cell="' + cell.id + '" data-target="output"></div>' : ''}
         </div>
       \`;
     }
@@ -2109,8 +2137,7 @@ export function replPage(): string {
         title: 'Mandelbrot',
         desc: 'Fractal heatmap with auto-render',
         cells: [
-          '; Click "Render" to visualize!',
-          '(define mandel (intent "mandelbrot escape iteration"))',
+          '; Click "Render" to visualize!\\n(define mandel (intent "mandelbrot escape iteration"))',
           '(mandel -0.75 0.1 256) ; near boundary'
         ]
       },
