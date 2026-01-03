@@ -2029,13 +2029,14 @@ export function replPage(): string {
           output.value.every(v => typeof v === 'number' || typeof v === 'bigint');
 
         if (isNumericArray && output.value.length >= 3) {
-          const canvasId = 'wave-' + Date.now();
+          const canvasId = 'wave-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+          const valueCopy = [...output.value]; // Copy to avoid reference being cleared
           content = \`
             <div class="output-result">\${escapeHtml(formatValue(output.value))}</div>
             <canvas id="\${canvasId}" class="waveform-canvas"></canvas>
           \`;
           // Schedule waveform render after DOM update
-          setTimeout(() => renderWaveform(canvasId, output.value), 10);
+          setTimeout(() => renderWaveform(canvasId, valueCopy), 50);
         } else {
           content = \`<div class="output-result">\${escapeHtml(formatValue(output.value))}</div>\`;
         }
