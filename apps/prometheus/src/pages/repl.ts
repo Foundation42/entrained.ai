@@ -887,7 +887,7 @@ export function replPage(): string {
 
         // Shared WASM memory for modules that need imports
         this.sharedMemory = new WebAssembly.Memory({ initial: 256 }); // 16MB
-        this.heapBase = 65536; // Start after first page to avoid WASM internals
+        this.heapBase = 131072; // Start at 128KB to avoid WASM temp buffers (often at 64KB)
         this.memoryOffset = this.heapBase;
       }
 
