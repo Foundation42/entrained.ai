@@ -270,7 +270,17 @@ export function replPage(): string {
     }
 
     .cell-output-wrapper {
+      overflow: visible;
+    }
+
+    .cell-output-wrapper[style*="height"] {
       overflow: auto;
+    }
+
+    .cell-output-wrapper[style*="height"] .render-canvas,
+    .cell-output-wrapper[style*="height"] .mandelbrot-canvas {
+      max-height: none;
+      height: auto;
     }
 
     .output-resize {
@@ -1426,9 +1436,14 @@ export function replPage(): string {
           const newHeight = Math.max(minHeight, resizing.startHeight + delta);
           resizing.container.style.height = newHeight + 'px';
           resizing.container.style.minHeight = newHeight + 'px';
+          resizing.container.style.maxHeight = newHeight + 'px';
           // Update Monaco editor layout if resizing editor
           if (!resizing.isOutput && editors[resizing.cellId]) {
             editors[resizing.cellId].layout();
+          }
+          // Force scroll recalculation for output areas
+          if (resizing.isOutput) {
+            resizing.container.scrollTop = resizing.container.scrollTop;
           }
         }
       });
