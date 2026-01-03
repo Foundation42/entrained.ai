@@ -1528,6 +1528,183 @@ export function replPage(): string {
         }
       });
 
+      // Register hover provider for function documentation
+      monaco.languages.registerHoverProvider('prometheus-lisp', {
+        provideHover: (model, position) => {
+          // Get the word at hover position
+          const wordInfo = model.getWordAtPosition(position);
+          if (!wordInfo) return null;
+
+          const word = wordInfo.word;
+
+          // Try to look up in the evaluator's environment
+          try {
+            const val = lisp.globalEnv.get(word);
+
+            // Check if it's a WASM function with semantic metadata
+            if (val && typeof val === 'object' && val.wasmFunc && val.semantic) {
+              const sem = val.semantic;
+              const lines = [];
+
+              // Build Haskell-style signature
+              const inputTypes = (sem.inputs || []).map(i => i.semantic_type || i.wasm_type).join(' → ');
+              const outputType = sem.output?.semantic_type || sem.output?.wasm_type || 'void';
+              const signature = inputTypes ? \`\${word} :: \${inputTypes} → \${outputType}\` : \`\${word} :: \${outputType}\`;
+
+              lines.push('```haskell');
+              lines.push(signature);
+              lines.push('```');
+
+              if (sem.description) {
+                lines.push('');
+                lines.push(sem.description);
+              }
+
+              // Inputs with details
+              if (sem.inputs && sem.inputs.length > 0) {
+                lines.push('');
+                lines.push('**Inputs:**');
+                for (const inp of sem.inputs) {
+                  let line = \`- \\\`\${inp.name}\\\` : \${inp.semantic_type || inp.wasm_type}\`;
+                  if (inp.range) line += \` [\${inp.range[0]}, \${inp.range[1]}]\`;
+                  if (inp.default !== undefined) line += \` (default: \${inp.default})\`;
+                  if (inp.description) line += \` — \${inp.description}\`;
+                  lines.push(line);
+                }
+              }
+
+              // Output
+              if (sem.output) {
+                lines.push('');
+                lines.push(\`**Returns:** \${sem.output.semantic_type || sem.output.wasm_type}\${sem.output.description ? ' — ' + sem.output.description : ''}\`);
+              }
+
+              // Algorithm & complexity
+              if (sem.algorithm || sem.time_complexity || sem.space_complexity) {
+                lines.push('');
+                if (sem.algorithm) lines.push(\`**Algorithm:** \${sem.algorithm}\`);
+                if (sem.time_complexity || sem.space_complexity) {
+                  lines.push(\`**Complexity:** Time \${sem.time_complexity || '?'}, Space \${sem.space_complexity || '?'}\`);
+                }
+              }
+
+              // Examples
+              if (sem.examples && sem.examples.length > 0) {
+                lines.push('');
+                lines.push('**Examples:**');
+                lines.push('```lisp');
+                for (const ex of sem.examples.slice(0, 3)) {
+                  const args = ex.inputs.join(' ');
+                  lines.push(\`(\${word} \${args}) → \${ex.output}\`);
+                }
+                lines.push('```');
+              }
+
+              // Properties
+              const props = [];
+              if (sem.pure) props.push('✓ pure');
+              if (sem.deterministic) props.push('✓ deterministic');
+              if (sem.category) props.push(\`[\${sem.category}]\`);
+              if (props.length > 0) {
+                lines.push('');
+                lines.push(props.join('  '));
+              }
+
+              return {
+                range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                contents: [{ value: lines.join('\\n') }]
+              };
+            }
+
+            // Check if it's a WASM function without rich metadata (just basic info)
+            if (val && typeof val === 'object' && val.wasmFunc) {
+              const lines = [];
+              lines.push('```haskell');
+              lines.push(\`\${word} :: \${val.signature || '?'}\`);
+              lines.push('```');
+              if (val.intent) lines.push(\`Intent: "\${val.intent}"\`);
+              if (val.size) lines.push(\`Size: \${val.size} bytes\`);
+
+              return {
+                range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                contents: [{ value: lines.join('\\n') }]
+              };
+            }
+
+            // Check if it's a Lambda
+            if (val instanceof Lambda) {
+              const params = val.params.map(p => p.name).join(' ');
+              return {
+                range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                contents: [{ value: \`\\\`\\\`lisp\\n(lambda (\${params}) ...)\\n\\\`\\\`\\\`\\nUser-defined function\` }]
+              };
+            }
+
+          } catch (e) {
+            // Symbol not defined, check if it's a builtin
+          }
+
+          // Builtin documentation
+          const builtinDocs = {
+            // Core
+            'define': '```lisp\\n(define name value)\\n(define (fn args...) body)\\n```\\nDefine a variable or function',
+            'lambda': '```lisp\\n(lambda (args...) body)\\n```\\nCreate an anonymous function',
+            'intent': '```lisp\\n(intent "description")\\n```\\nCompile WASM function from natural language',
+            'if': '```lisp\\n(if condition then-expr else-expr)\\n```\\nConditional expression',
+            'let': '```lisp\\n(let ((x 1) (y 2)) body)\\n```\\nLocal variable bindings',
+
+            // Lists
+            'map': '```haskell\\nmap :: (a → b) → [a] → [b]\\n```\\nApply function to each element',
+            'filter': '```haskell\\nfilter :: (a → Bool) → [a] → [a]\\n```\\nKeep elements matching predicate',
+            'reduce': '```haskell\\nreduce :: (b → a → b) → [a] → b → b\\n```\\nFold list with function',
+            'range': '```haskell\\nrange :: Int → Int? → Int? → [Int]\\n```\\nGenerate number sequence\\n\\n```lisp\\n(range 5)       → (0 1 2 3 4)\\n(range 2 5)     → (2 3 4)\\n(range 0 10 2)  → (0 2 4 6 8)\\n```',
+            'list': '```lisp\\n(list 1 2 3) → (1 2 3)\\n```\\nCreate a list',
+            'car': '```haskell\\ncar :: [a] → a\\n```\\nFirst element of list',
+            'cdr': '```haskell\\ncdr :: [a] → [a]\\n```\\nRest of list (all but first)',
+            'cons': '```haskell\\ncons :: a → [a] → [a]\\n```\\nPrepend element to list',
+            'length': '```haskell\\nlength :: [a] → Int\\n```\\nNumber of elements',
+
+            // Strings
+            'string-length': '```haskell\\nstring-length :: String → Int\\n```\\nLength of string (UTF-8 aware)',
+            'string-concat': '```haskell\\nstring-concat :: String... → String\\n```\\nConcatenate strings\\n```lisp\\n(string-concat "a" "b" "c") → "abc"\\n```',
+            'string-split': '```haskell\\nstring-split :: String → String → [String]\\n```\\nSplit string by delimiter\\n```lisp\\n(string-split "a,b,c" ",") → ("a" "b" "c")\\n```',
+            'string-join': '```haskell\\nstring-join :: [String] → String → String\\n```\\nJoin list with delimiter\\n```lisp\\n(string-join (list "a" "b") "-") → "a-b"\\n```',
+            'string-upcase': '```haskell\\nstring-upcase :: String → String\\n```\\nConvert to uppercase',
+            'string-downcase': '```haskell\\nstring-downcase :: String → String\\n```\\nConvert to lowercase',
+            'substring': '```haskell\\nsubstring :: String → Int → Int? → String\\n```\\nExtract substring\\n```lisp\\n(substring "hello" 1 4) → "ell"\\n```',
+            'string-replace': '```haskell\\nstring-replace :: String → String → String → String\\n```\\nReplace all occurrences',
+            'string-contains?': '```haskell\\nstring-contains? :: String → String → Bool\\n```\\nCheck if contains substring',
+
+            // Regex
+            'regex-test': '```haskell\\nregex-test :: Pattern → String → Bool\\n```\\nTest if pattern matches\\n```lisp\\n(regex-test "\\\\\\\\d+" "abc123") → #t\\n```',
+            'regex-match': '```haskell\\nregex-match :: Pattern → String → String | #f\\n```\\nFind first match',
+            'regex-match-all': '```haskell\\nregex-match-all :: Pattern → String → [String]\\n```\\nFind all matches\\n```lisp\\n(regex-match-all "\\\\\\\\d+" "a1b2c3") → ("1" "2" "3")\\n```',
+            'regex-replace': '```haskell\\nregex-replace :: Pattern → String → String → String\\n```\\nReplace matches\\n```lisp\\n(regex-replace "\\\\\\\\s+" "-" "a b  c") → "a-b-c"\\n```',
+            'regex-split': '```haskell\\nregex-split :: Pattern → String → [String]\\n```\\nSplit by pattern',
+
+            // Math
+            'abs': '```haskell\\nabs :: Num → Num\\n```\\nAbsolute value',
+            'sqrt': '```haskell\\nsqrt :: Num → Num\\n```\\nSquare root',
+            'floor': '```haskell\\nfloor :: Num → Int\\n```\\nRound down',
+            'ceil': '```haskell\\nceil :: Num → Int\\n```\\nRound up',
+            'mod': '```haskell\\nmod :: Int → Int → Int\\n```\\nModulo (remainder)',
+
+            // Introspection
+            'wasm-stats': '```lisp\\n(wasm-stats)\\n```\\nShow compilation statistics',
+            'wasm-cache-size': '```lisp\\n(wasm-cache-size)\\n```\\nNumber of cached WASM functions',
+          };
+
+          if (builtinDocs[word]) {
+            return {
+              range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+              contents: [{ value: builtinDocs[word] }]
+            };
+          }
+
+          return null;
+        }
+      });
+
       init();
     });
 
