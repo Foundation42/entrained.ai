@@ -1642,7 +1642,11 @@ export function replPage(): string {
         const canvasId = 'render-' + data.hash;
 
         // Determine what render buttons/controls to show
-        const hasHeatmap = rendererType === 'heatmap';
+        // Check semantic metadata OR intent keywords OR buffer signature
+        const intent = (data.expanded_intent || '').toLowerCase();
+        const isFractalIntent = intent.includes('mandelbrot') || intent.includes('julia') || intent.includes('fractal');
+        const isBufferSig = data.signature?.startsWith('(i32, i32, i32') && data.signature?.includes('-> void');
+        const hasHeatmap = rendererType === 'heatmap' || isFractalIntent || isBufferSig;
         const hasViz = hasHeatmap; // Extend for other types later
 
         // Show semantic info if available
@@ -1761,13 +1765,51 @@ export function replPage(): string {
       const resolution = renderer.resolution || [600, 400];
       const colormap = COLORMAPS[renderer.colormap] || COLORMAPS.viridis;
 
-      // Get domain ranges from metadata or use defaults
-      const xRange = domain.x?.range || [-2.5, 1.0];
-      const yRange = domain.y?.range || [-1.5, 1.5];
+      // Detect Julia set by signature pattern: (f64, f64, f64, f64, i32) -> i32
+      const sig = semantic?.signature || '';
+      const isJulia = sig.includes('f64, f64, f64, f64, i32');
+
+      // Get domain ranges from metadata or use defaults (Julia uses symmetric [-2,2])
+      const defaultXRange = isJulia ? [-2.0, 2.0] : [-2.5, 1.0];
+      const defaultYRange = isJulia ? [-2.0, 2.0] : [-1.5, 1.5];
+      const xRange = domain.x?.range || defaultXRange;
+      const yRange = domain.y?.range || defaultYRange;
 
       // Find max value for normalization (from iteration_limit input or output range)
       const iterInput = semantic?.inputs?.find(i => i.semantic_type === 'iteration_limit');
       const maxValue = iterInput?.default || semantic?.output?.range?.[1] || 256;
+
+      // Build argument list from semantic inputs
+      // Variable inputs (coordinate.x, coordinate.y) get pixel values
+      // Constant inputs get their default values
+      const inputs = semantic?.inputs || [];
+
+      const buildArgs = (x, y) => {
+        if (inputs.length === 0) {
+          // Fallback for Julia: (zx, zy, cx, cy, max_iter)
+          if (isJulia) {
+            return [x, y, -0.7, 0.27015, 256]; // Classic Julia set constants
+          }
+          // Default fallback: just (x, y, ...extraArgs)
+          return [x, y, ...extraArgs];
+        }
+
+        return inputs.map(input => {
+          const semType = input.semantic_type;
+          // Variable coordinates - use pixel position
+          if (semType === 'coordinate.x') return x;
+          if (semType === 'coordinate.y') return y;
+          // Constant parameters - use default values (for Julia set cx, cy)
+          if (semType === 'constant.x' || semType === 'constant.y' || semType === 'constant') {
+            return input.default !== undefined ? input.default : 0;
+          }
+          // Use default value for other inputs with defaults
+          if (input.default !== undefined) return input.default;
+          // Special cases
+          if (semType === 'iteration_limit') return 256;
+          return 0;
+        });
+      };
 
       const width = canvas.width = resolution[0];
       const height = canvas.height = resolution[1];
@@ -1782,8 +1824,9 @@ export function replPage(): string {
           const x = xMin + (px / width) * (xMax - xMin);
           const y = yMin + (py / height) * (yMax - yMin);
 
-          // Call function with x, y, and any extra args (like max_iter)
-          const value = func(x, y, ...extraArgs);
+          // Build args based on semantic metadata
+          const args = buildArgs(x, y);
+          const value = func(...args);
 
           // Normalize to 0-1, handle "in set" case
           const t = value >= maxValue ? 0 : value / maxValue;
@@ -1798,6 +1841,164 @@ export function replPage(): string {
       }
 
       ctx.putImageData(imageData, 0, 0);
+    }
+
+    // Progressive heatmap renderer - renders in chunks for better UX
+    async function renderHeatmapProgressive(canvasId, func, semantic, extraArgs = [], onProgress) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+
+      const renderer = semantic?.renderer || {};
+      const domain = renderer.domain || {};
+      const resolution = renderer.resolution || [600, 400];
+      const colormap = COLORMAPS[renderer.colormap] || COLORMAPS.viridis;
+
+      const xRange = domain.x?.range || [-2.5, 1.0];
+      const yRange = domain.y?.range || [-1.5, 1.5];
+
+      const iterInput = semantic?.inputs?.find(i => i.semantic_type === 'iteration_limit');
+      const maxValue = iterInput?.default || semantic?.output?.range?.[1] || 256;
+
+      const inputs = semantic?.inputs || [];
+      const buildArgs = (x, y) => {
+        if (inputs.length === 0) return [x, y, ...extraArgs];
+        return inputs.map(input => {
+          const semType = input.semantic_type;
+          if (semType === 'coordinate.x') return x;
+          if (semType === 'coordinate.y') return y;
+          if (semType === 'constant.x' || semType === 'constant.y' || semType === 'constant') {
+            return input.default !== undefined ? input.default : 0;
+          }
+          if (input.default !== undefined) return input.default;
+          if (semType === 'iteration_limit') return 256;
+          return 0;
+        });
+      };
+
+      const width = canvas.width = resolution[0];
+      const height = canvas.height = resolution[1];
+      const ctx = canvas.getContext('2d');
+      const imageData = ctx.createImageData(width, height);
+
+      const [xMin, xMax] = xRange;
+      const [yMin, yMax] = yRange;
+
+      // Pre-compute x coordinates
+      const xCoords = new Float64Array(width);
+      for (let px = 0; px < width; px++) {
+        xCoords[px] = xMin + (px / width) * (xMax - xMin);
+      }
+
+      const CHUNK_SIZE = 20; // rows per chunk
+      let currentRow = 0;
+
+      return new Promise((resolve) => {
+        function renderChunk() {
+          const endRow = Math.min(currentRow + CHUNK_SIZE, height);
+          const startTime = performance.now();
+
+          for (let py = currentRow; py < endRow; py++) {
+            const y = yMin + (py / height) * (yMax - yMin);
+            for (let px = 0; px < width; px++) {
+              const args = buildArgs(xCoords[px], y);
+              const value = func(...args);
+
+              const t = value >= maxValue ? 0 : value / maxValue;
+              const [r, g, b] = t === 0 ? [0, 0, 0] : colormap(t);
+
+              const idx = (py * width + px) * 4;
+              imageData.data[idx] = r;
+              imageData.data[idx + 1] = g;
+              imageData.data[idx + 2] = b;
+              imageData.data[idx + 3] = 255;
+            }
+          }
+
+          // Put partial result to canvas
+          ctx.putImageData(imageData, 0, 0);
+          currentRow = endRow;
+
+          if (onProgress) {
+            onProgress(currentRow / height, performance.now() - startTime);
+          }
+
+          if (currentRow < height) {
+            requestAnimationFrame(renderChunk);
+          } else {
+            resolve();
+          }
+        }
+
+        renderChunk();
+      });
+    }
+
+    // Buffer-based renderer - allocates WASM memory for entire image
+    // This is much faster when the WASM function supports buffer output
+    function renderHeatmapBuffer(canvasId, func, semantic, memory) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas || !memory) return false;
+
+      const renderer = semantic?.renderer || {};
+      const resolution = renderer.resolution || [600, 400];
+      const colormap = COLORMAPS[renderer.colormap] || COLORMAPS.viridis;
+
+      const width = canvas.width = resolution[0];
+      const height = canvas.height = resolution[1];
+      const ctx = canvas.getContext('2d');
+
+      // Check if function has buffer signature (takes ptr, width, height, ...)
+      // This is detected by having a "buffer" semantic type on first input
+      const inputs = semantic?.inputs || [];
+      const hasBufferInput = inputs.some(i => i.semantic_type === 'pointer' || i.semantic_type === 'buffer');
+
+      if (!hasBufferInput) return false;
+
+      // Allocate buffer in WASM memory
+      const pixelCount = width * height;
+      const bufferSize = pixelCount * 4; // i32 per pixel
+
+      // Ensure memory is large enough (grow if needed)
+      const neededPages = Math.ceil((65536 + bufferSize) / 65536);
+      const currentPages = memory.buffer.byteLength / 65536;
+      if (neededPages > currentPages) {
+        memory.grow(neededPages - currentPages);
+      }
+
+      const ptr = 65536; // Start after first page
+      const domain = renderer.domain || {};
+      const xRange = domain.x?.range || [-2.5, 1.0];
+      const yRange = domain.y?.range || [-1.5, 1.5];
+
+      const iterInput = semantic?.inputs?.find(i => i.semantic_type === 'iteration_limit');
+      const maxIter = iterInput?.default || 256;
+
+      // Call WASM with buffer signature: (ptr, width, height, xMin, xMax, yMin, yMax, maxIter)
+      try {
+        func(ptr, width, height, xRange[0], xRange[1], yRange[0], yRange[1], maxIter);
+      } catch (e) {
+        console.warn('Buffer render failed:', e);
+        return false;
+      }
+
+      // Read results from WASM memory
+      const results = new Int32Array(memory.buffer, ptr, pixelCount);
+      const imageData = ctx.createImageData(width, height);
+
+      for (let i = 0; i < pixelCount; i++) {
+        const value = results[i];
+        const t = value >= maxIter ? 0 : value / maxIter;
+        const [r, g, b] = t === 0 ? [0, 0, 0] : colormap(t);
+
+        const idx = i * 4;
+        imageData.data[idx] = r;
+        imageData.data[idx + 1] = g;
+        imageData.data[idx + 2] = b;
+        imageData.data[idx + 3] = 255;
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      return true;
     }
 
     // Legacy: render mandelbrot (for backwards compat)
@@ -1932,10 +2133,104 @@ export function replPage(): string {
       return intent.includes('mandelbrot') || intent.includes('mandel');
     }
 
+    // Check if a function is any fractal type (mandelbrot, julia, etc.)
+    function isFractalFunc(fn) {
+      if (!fn) return false;
+      // Check semantic metadata
+      if (fn.semantic?.renderer?.type === 'heatmap') return true;
+      // Check intent keywords
+      const intent = (fn.intent || '').toLowerCase();
+      if (intent.includes('mandelbrot') || intent.includes('julia') || intent.includes('fractal')) return true;
+      // Check for buffer signature pattern
+      if (isBufferFunction(fn)) return true;
+      return false;
+    }
+
     // Store functions for rendering
     let renderFuncs = {};
 
-    // Trigger auto-rendering based on semantic metadata
+    // Check if function is a buffer-based fractal (signature starts with ptr, width, height)
+    function isBufferFunction(fn) {
+      if (!fn?.signature) return false;
+      // Buffer functions: (i32, i32, i32, f64, f64, f64, f64, i32) -> void
+      const sig = fn.signature.toLowerCase();
+      return sig.startsWith('(i32, i32, i32') && sig.includes('-> void');
+    }
+
+    // Render a buffer-based fractal function
+    async function renderBufferFractal(fn, canvasId, options = {}) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas || !fn?.wasmFunc || !fn?.memory) {
+        console.error('Missing canvas, function, or memory');
+        return false;
+      }
+
+      const width = options.width || 600;
+      const height = options.height || 400;
+      const maxIter = options.maxIter || 256;
+
+      // Detect Julia for domain defaults
+      const isJulia = (fn.intent || '').toLowerCase().includes('julia');
+      const xMin = options.xMin ?? (isJulia ? -2.0 : -2.5);
+      const xMax = options.xMax ?? (isJulia ? 2.0 : 1.0);
+      const yMin = options.yMin ?? (isJulia ? -2.0 : -1.5);
+      const yMax = options.yMax ?? (isJulia ? 2.0 : 1.5);
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+
+      const pixelCount = width * height;
+      const bufferSize = pixelCount * 4; // i32 per pixel
+
+      // Ensure memory is large enough
+      const neededPages = Math.ceil((65536 + bufferSize) / 65536);
+      const currentPages = fn.memory.buffer.byteLength / 65536;
+      if (neededPages > currentPages) {
+        fn.memory.grow(neededPages - currentPages);
+      }
+
+      const ptr = 65536; // Start after first page
+      const start = performance.now();
+
+      // AI generates different param orders - detect and handle both:
+      // Mandelbrot: (ptr, w, h, xMin, yMin, xMax, yMax, maxIter) - interleaved
+      // Julia:      (ptr, w, h, xMin, xMax, yMin, yMax, maxIter) - grouped
+      if (isJulia) {
+        fn.wasmFunc(ptr, width, height, xMin, xMax, yMin, yMax, maxIter);
+      } else {
+        fn.wasmFunc(ptr, width, height, xMin, yMin, xMax, yMax, maxIter);
+      }
+
+      const callTime = performance.now() - start;
+
+      // Read results and render - MUST access memory.buffer AFTER the call
+      // because grow() detaches the old ArrayBuffer
+      const results = new Int32Array(fn.memory.buffer, ptr, pixelCount);
+      const imageData = ctx.createImageData(width, height);
+      const colormap = COLORMAPS.viridis;
+
+      for (let i = 0; i < pixelCount; i++) {
+        const value = results[i];
+        const t = value >= maxIter ? 0 : value / maxIter;
+        const [r, g, b] = t === 0 ? [0, 0, 0] : colormap(t);
+
+        const idx = i * 4;
+        imageData.data[idx] = r;
+        imageData.data[idx + 1] = g;
+        imageData.data[idx + 2] = b;
+        imageData.data[idx + 3] = 255;
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      const totalTime = performance.now() - start;
+      console.log(\`Buffer render: \${width}x\${height} in \${totalTime.toFixed(1)}ms (WASM: \${callTime.toFixed(1)}ms)\`);
+
+      return { width, height, callTime, totalTime };
+    }
+
+    // Trigger auto-rendering based on semantic metadata or signature detection
     async function triggerAutoRender(hash, canvasId) {
       const canvas = document.getElementById(canvasId);
       const info = document.getElementById(canvasId + '-info');
@@ -1955,25 +2250,39 @@ export function replPage(): string {
       const semantic = fn.semantic;
       const rendererType = semantic?.renderer?.type || 'value';
 
-      // Render asynchronously to not block UI
-      setTimeout(() => {
+      // Auto-detect buffer function by signature pattern
+      if (isBufferFunction(fn)) {
+        const start = Date.now();
+        const result = await renderBufferFractal(fn, canvasId);
+        if (result) {
+          const elapsed = Date.now() - start;
+          if (info) info.textContent = \`Buffer rendered \${result.width}x\${result.height} in \${elapsed.toFixed(0)}ms (1 WASM call!)\`;
+          return;
+        }
+      }
+
+      if (rendererType === 'heatmap' || isFractalFunc(fn)) {
+        const resolution = semantic?.renderer?.resolution || [600, 400];
+        const pixels = resolution[0] * resolution[1];
         const start = Date.now();
 
-        if (rendererType === 'heatmap') {
-          // Get default max_iter from semantic metadata
-          const iterInput = semantic?.inputs?.find(i => i.semantic_type === 'iteration_limit');
-          const maxIter = iterInput?.default || 256;
-          const resolution = semantic?.renderer?.resolution || [600, 400];
-
-          renderHeatmap(canvasId, fn.wasmFunc, semantic, [maxIter]);
-
+        // First try buffer-based rendering via semantic metadata
+        if (fn.memory && renderHeatmapBuffer(canvasId, fn.wasmFunc, semantic, fn.memory)) {
           const elapsed = Date.now() - start;
-          const pixels = resolution[0] * resolution[1];
-          if (info) info.textContent = \`Rendered \${resolution[0]}x\${resolution[1]} = \${pixels.toLocaleString()} WASM calls in \${elapsed}ms\`;
-        } else {
-          if (info) info.textContent = \`Renderer type '\${rendererType}' not yet supported\`;
+          if (info) info.textContent = \`Buffer rendered \${resolution[0]}x\${resolution[1]} in \${elapsed}ms (single WASM call)\`;
+          return;
         }
-      }, 10);
+
+        // Use fast blocking render (no progressive updates needed for typical sizes)
+        // Include signature in semantic for Julia detection
+        const semanticWithSig = { ...semantic, signature: fn.signature };
+        renderHeatmap(canvasId, fn.wasmFunc, semanticWithSig, []);
+
+        const elapsed = Date.now() - start;
+        if (info) info.textContent = \`Rendered \${resolution[0]}x\${resolution[1]} = \${pixels.toLocaleString()} WASM calls in \${elapsed}ms\`;
+      } else {
+        if (info) info.textContent = \`Renderer type '\${rendererType}' not yet supported\`;
+      }
     }
 
     // Legacy: trigger mandelbrot rendering (for backwards compat)
@@ -2168,6 +2477,20 @@ export function replPage(): string {
           '; Julia set: iterate z = z² + c for each point z\\n(define julia (intent "julia set escape iteration, takes zx zy cx cy max_iter"))',
           '; Try different c values for different shapes\\n(julia 0.0 0.0 -0.7 0.27015 256)',
           '(julia 0.5 0.5 -0.7 0.27015 256)'
+        ]
+      },
+      {
+        title: 'Mandelbrot Buffer',
+        desc: 'Single WASM call renders entire fractal!',
+        cells: [
+          '; Buffer-based: WASM fills entire image in one call\\n(define mbuf (intent "mandelbrot buffer"))'
+        ]
+      },
+      {
+        title: 'Julia Buffer',
+        desc: 'Buffer-based Julia set rendering',
+        cells: [
+          '; Julia buffer: single WASM call for whole image\\n(define jbuf (intent "julia set buffer, fills buffer with escape iterations for c=-0.7+0.27i"))'
         ]
       },
       {
