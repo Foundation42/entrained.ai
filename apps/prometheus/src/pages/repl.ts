@@ -384,6 +384,15 @@ export function replPage(): string {
       border-radius: 4px;
     }
 
+    .waveform-canvas {
+      width: 100%;
+      max-width: 600px;
+      height: 120px;
+      border-radius: 6px;
+      margin-top: 0.5rem;
+      background: var(--bg-secondary);
+    }
+
     /* Add cell button */
     .add-cell {
       display: flex;
@@ -1527,7 +1536,22 @@ export function replPage(): string {
           \${hasViz ? '<canvas id="' + canvasId + '" class="render-canvas" style="display:none;margin-top:0.5rem;"></canvas><div id="' + canvasId + '-info" class="render-info"></div>' : ''}
         \`;
       } else {
-        content = \`<div class="output-result">\${escapeHtml(formatValue(output.value))}</div>\`;
+        // Check if result is an array - show waveform visualization
+        const isNumericArray = Array.isArray(output.value) &&
+          output.value.length > 0 &&
+          output.value.every(v => typeof v === 'number' || typeof v === 'bigint');
+
+        if (isNumericArray && output.value.length >= 3) {
+          const canvasId = 'wave-' + Date.now();
+          content = \`
+            <div class="output-result">\${escapeHtml(formatValue(output.value))}</div>
+            <canvas id="\${canvasId}" class="waveform-canvas"></canvas>
+          \`;
+          // Schedule waveform render after DOM update
+          setTimeout(() => renderWaveform(canvasId, output.value), 10);
+        } else {
+          content = \`<div class="output-result">\${escapeHtml(formatValue(output.value))}</div>\`;
+        }
       }
 
       const timing = output.timing_ms !== undefined
@@ -1659,16 +1683,17 @@ export function replPage(): string {
       }, [maxIter]);
     }
 
-    // Render waveform (line graph) for 1D functions
+    // Render waveform (bar chart) for arrays
     function renderWaveform(canvasId, data, semantic) {
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
 
-      const width = canvas.width = 600;
-      const height = canvas.height = 200;
+      // Use canvas element dimensions or defaults
+      const width = canvas.width = canvas.offsetWidth || 600;
+      const height = canvas.height = canvas.offsetHeight || 120;
       const ctx = canvas.getContext('2d');
 
-      // Clear
+      // Clear with dark background
       ctx.fillStyle = '#161b22';
       ctx.fillRect(0, 0, width, height);
 
@@ -1680,35 +1705,39 @@ export function replPage(): string {
       const max = Math.max(...values);
       const range = max - min || 1;
 
-      // Draw grid
+      const padding = 10;
+      const barWidth = Math.max(2, (width - padding * 2) / values.length - 1);
+      const chartHeight = height - padding * 2;
+
+      // Draw bars with gradient based on value
+      for (let i = 0; i < values.length; i++) {
+        const normalized = (values[i] - min) / range;
+        const barHeight = Math.max(2, normalized * chartHeight);
+        const x = padding + i * (barWidth + 1);
+        const y = height - padding - barHeight;
+
+        // Color gradient: blue (low) -> green (high)
+        const r = Math.floor(88 * (1 - normalized));
+        const g = Math.floor(166 + 80 * normalized);
+        const b = Math.floor(255 * (1 - normalized * 0.5));
+        ctx.fillStyle = \`rgb(\${r}, \${g}, \${b})\`;
+        ctx.fillRect(x, y, barWidth, barHeight);
+      }
+
+      // Draw baseline
       ctx.strokeStyle = '#30363d';
       ctx.lineWidth = 1;
-      for (let i = 0; i <= 4; i++) {
-        const y = (height / 4) * i;
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
-      }
-
-      // Draw waveform
-      ctx.strokeStyle = '#58a6ff';
-      ctx.lineWidth = 2;
       ctx.beginPath();
-
-      for (let i = 0; i < values.length; i++) {
-        const x = (i / (values.length - 1)) * width;
-        const y = height - ((values[i] - min) / range) * (height - 20) - 10;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
+      ctx.moveTo(padding, height - padding);
+      ctx.lineTo(width - padding, height - padding);
       ctx.stroke();
 
       // Draw value labels
       ctx.fillStyle = '#8b949e';
-      ctx.font = '11px JetBrains Mono';
-      ctx.fillText(max.toFixed(1), 5, 15);
-      ctx.fillText(min.toFixed(1), 5, height - 5);
+      ctx.font = '10px JetBrains Mono';
+      ctx.fillText(Math.round(max).toString(), 5, 12);
+      ctx.fillText(Math.round(min).toString(), 5, height - 3);
+      ctx.fillText(\`n=\${values.length}\`, width - 40, 12);
     }
 
     // Render histogram (bar chart)
