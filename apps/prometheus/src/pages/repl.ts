@@ -235,7 +235,38 @@ export function replPage(): string {
     .editor-container {
       width: 100%;
       height: 80px;
-      min-height: 80px;
+      min-height: 60px;
+    }
+
+    /* Resize handle */
+    .cell-resize {
+      height: 6px;
+      background: transparent;
+      cursor: ns-resize;
+      position: relative;
+      transition: background 0.15s;
+    }
+
+    .cell-resize:hover,
+    .cell-resize.dragging {
+      background: var(--accent);
+    }
+
+    .cell-resize::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 40px;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      transition: background 0.15s;
+    }
+
+    .cell-resize:hover::after {
+      background: var(--accent);
     }
 
     /* Monaco overrides */
@@ -1345,6 +1376,47 @@ export function replPage(): string {
       addCell('code', '(define fib (intent "fibonacci"))');
       addCell('code', '(fib 10)');
       loadStats();
+      initResizeHandles();
+    }
+
+    // Cell resize handling
+    let resizing = null;
+
+    function initResizeHandles() {
+      document.addEventListener('mousedown', (e) => {
+        if (e.target.classList.contains('cell-resize')) {
+          e.preventDefault();
+          const cellId = e.target.dataset.cell;
+          const container = document.getElementById('editor-' + cellId);
+          if (container) {
+            resizing = { cellId, container, startY: e.clientY, startHeight: container.offsetHeight };
+            e.target.classList.add('dragging');
+            document.body.style.cursor = 'ns-resize';
+            document.body.style.userSelect = 'none';
+          }
+        }
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (resizing) {
+          const delta = e.clientY - resizing.startY;
+          const newHeight = Math.max(60, resizing.startHeight + delta);
+          resizing.container.style.height = newHeight + 'px';
+          // Update Monaco editor layout
+          if (editors[resizing.cellId]) {
+            editors[resizing.cellId].layout();
+          }
+        }
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (resizing) {
+          document.querySelectorAll('.cell-resize.dragging').forEach(el => el.classList.remove('dragging'));
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          resizing = null;
+        }
+      });
     }
 
     // Add a new cell
@@ -1494,6 +1566,7 @@ export function replPage(): string {
           </div>
           <div class="cell-editor">
             <div class="editor-container" id="editor-\${cell.id}" data-content="\${escapeHtml(cell.content)}"></div>
+            <div class="cell-resize" data-cell="\${cell.id}"></div>
           </div>
           \${outputHtml}
         </div>
@@ -2093,8 +2166,7 @@ export function replPage(): string {
         cells: [
           '(define fib (intent "fibonacci"))',
           '(define prime? (intent "is prime"))',
-          '; Which fibonacci numbers are prime?',
-          '(filter prime? (map fib (range 2 20)))'
+          '; Which fibonacci numbers are prime?\n(filter prime? (map fib (range 2 20)))'
         ]
       }
     ];
