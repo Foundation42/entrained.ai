@@ -438,6 +438,112 @@ export function replPage(): string {
       border-radius: 4px;
     }
 
+    /* Describe output panel */
+    .describe-panel {
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .describe-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .describe-name {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .describe-category {
+      font-size: 0.7rem;
+      color: var(--success);
+      background: rgba(63, 185, 80, 0.15);
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+    }
+    .describe-desc {
+      color: var(--text-secondary);
+      margin-bottom: 0.75rem;
+      line-height: 1.4;
+    }
+    .describe-section {
+      margin-top: 0.75rem;
+    }
+    .describe-section-title {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 0.35rem;
+    }
+    .describe-input {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .describe-input:last-child {
+      border-bottom: none;
+    }
+    .describe-input-name {
+      font-weight: 500;
+      color: var(--text-primary);
+      min-width: 80px;
+    }
+    .describe-input-type {
+      color: var(--warning);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .describe-input-wasm {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+    .describe-input-desc {
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      margin-left: auto;
+    }
+    .describe-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+    .describe-meta-item {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .describe-meta-item span {
+      color: var(--text-secondary);
+    }
+    .describe-example {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      padding: 0.25rem 0;
+      color: var(--text-secondary);
+    }
+    .describe-example .result {
+      color: var(--success);
+    }
+    .describe-props {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .describe-prop {
+      font-size: 0.7rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      background: rgba(136, 146, 157, 0.15);
+      color: var(--text-muted);
+    }
+    .describe-prop.pure {
+      background: rgba(63, 185, 80, 0.15);
+      color: var(--success);
+    }
+
     .waveform-canvas {
       width: 100%;
       max-width: 600px;
@@ -1051,6 +1157,36 @@ export function replPage(): string {
         env.define('wasm-stats', () => ({ ...self.stats }));
         env.define('wasm-cache-size', () => self.wasmCache.size);
 
+        // Describe function - returns rich metadata object for special rendering
+        env.define('describe', fn => {
+          if (fn && typeof fn === 'object' && fn.wasmFunc) {
+            return {
+              __type: 'describe',
+              name: fn.name,
+              intent: fn.intent,
+              signature: fn.signature,
+              size: fn.size,
+              hash: fn.hash,
+              semantic: fn.semantic || null
+            };
+          } else if (fn instanceof Lambda) {
+            return {
+              __type: 'describe',
+              name: '<lambda>',
+              params: fn.params.map(p => p.name),
+              isLambda: true
+            };
+          } else if (typeof fn === 'function') {
+            return {
+              __type: 'describe',
+              name: fn.name || '<builtin>',
+              isBuiltin: true
+            };
+          } else {
+            return { __type: 'describe', error: 'Not a function' };
+          }
+        });
+
         return env;
       }
 
@@ -1355,7 +1491,7 @@ export function replPage(): string {
                    'first', 'rest', 'nth', 'length', 'append', 'reverse', 'sort',
                    'apply', 'eval', 'print', 'display', 'newline',
                    'eq?', 'equal?', 'null?', 'pair?', 'list?', 'number?', 'string?', 'symbol?',
-                   'search', 'wasm-stats', 'wasm-cache-size', 'abs', 'mod', 'max', 'min',
+                   'describe', 'wasm-stats', 'wasm-cache-size', 'abs', 'mod', 'max', 'min',
                    'fib', 'factorial', 'gcd', 'is_prime', 'fibonacci',
                    'string-length', 'string-concat', 'substring', 'char-at',
                    'string-upcase', 'string-downcase', 'string-split', 'string-join', 'string-trim',
@@ -1518,6 +1654,7 @@ export function replPage(): string {
             { label: 'function?', kind: monaco.languages.CompletionItemKind.Function, insertText: 'function? ', detail: 'Check if function' },
 
             // Introspection
+            { label: 'describe', kind: monaco.languages.CompletionItemKind.Function, insertText: 'describe ', detail: '(describe fn) - Show rich function metadata' },
             { label: 'wasm-stats', kind: monaco.languages.CompletionItemKind.Function, insertText: 'wasm-stats', detail: 'Show WASM compilation stats' },
             { label: 'wasm-cache-size', kind: monaco.languages.CompletionItemKind.Function, insertText: 'wasm-cache-size', detail: 'Number of cached functions' },
           ];
@@ -1535,10 +1672,13 @@ export function replPage(): string {
           const line = model.getLineContent(position.lineNumber);
           const col = position.column - 1; // 0-based
 
-          // LISP identifier chars
-          const isIdentChar = (c) => c && /[a-zA-Z0-9_\\-?!<>=*+/]/.test(c);
+          // LISP identifier chars - escape forward slash to avoid regex confusion
+          const isIdentChar = (c) => c && /[a-zA-Z0-9_\\-?!<>=*+\\/]/.test(c);
 
-          if (!isIdentChar(line[col])) return null;
+          if (!isIdentChar(line[col])) {
+            console.log('[Hover] Not on identifier char:', line[col]);
+            return null;
+          }
 
           // Scan backwards and forwards to find full identifier
           let start = col;
@@ -1547,6 +1687,7 @@ export function replPage(): string {
           while (end < line.length - 1 && isIdentChar(line[end + 1])) end++;
 
           const word = line.slice(start, end + 1);
+          console.log('[Hover] Word:', word);
           if (!word) return null;
 
           // Create range for hover highlight (1-based columns)
@@ -1556,6 +1697,7 @@ export function replPage(): string {
           // Try to look up in the evaluator's environment
           try {
             const val = lisp.globalEnv.get(word);
+            console.log('[Hover] Found in env:', word, val ? 'yes' : 'no', val?.wasmFunc ? 'wasm' : '', val?.semantic ? 'semantic' : '');
 
             // Check if it's a WASM function with semantic metadata
             if (val && typeof val === 'object' && val.wasmFunc && val.semantic) {
@@ -1679,6 +1821,7 @@ export function replPage(): string {
 
           } catch (e) {
             // Symbol not defined, check if it's a builtin
+            console.log('[Hover] Not in env, checking builtins for:', word);
           }
 
           // Builtin documentation
@@ -1727,17 +1870,20 @@ export function replPage(): string {
             'mod': '\`\`\`lisp\\n(mod a b)\\n\`\`\`\\nModulo (remainder)',
 
             // Introspection
+            'describe': '\`\`\`lisp\\n(describe fn)\\n\`\`\`\\nShow rich metadata for a function\\n\\nDisplays inputs with semantic types, algorithm, complexity, examples, and properties.',
             'wasm-stats': '\`\`\`lisp\\n(wasm-stats)\\n\`\`\`\\nShow compilation statistics',
             'wasm-cache-size': '\`\`\`lisp\\n(wasm-cache-size)\\n\`\`\`\\nNumber of cached WASM functions',
           };
 
           if (builtinDocs[word]) {
+            console.log('[Hover] Found builtin docs for:', word);
             return {
               range: new monaco.Range(position.lineNumber, wordStart, position.lineNumber, wordEnd),
               contents: [{ value: builtinDocs[word] }]
             };
           }
 
+          console.log('[Hover] No hover found for:', word);
           return null;
         }
       });
@@ -2022,6 +2168,9 @@ export function replPage(): string {
           </div>
           \${hasViz ? '<canvas id="' + canvasId + '" class="render-canvas" style="display:none;margin-top:0.5rem;"></canvas><div id="' + canvasId + '-info" class="render-info"></div>' : ''}
         \`;
+      } else if (output.value && typeof output.value === 'object' && output.value.__type === 'describe') {
+        // Describe output - rich function documentation
+        content = renderDescribe(output.value);
       } else {
         // Check if result is an array - show waveform visualization
         const isNumericArray = Array.isArray(output.value) &&
@@ -2068,6 +2217,142 @@ export function replPage(): string {
         return JSON.stringify(value, (k, v) => typeof v === 'bigint' ? String(v) : v, 2);
       }
       return String(value);
+    }
+
+    // Render describe output with rich formatting
+    function renderDescribe(desc) {
+      if (desc.error) {
+        return \`<div class="output-error">\${escapeHtml(desc.error)}</div>\`;
+      }
+
+      if (desc.isBuiltin) {
+        return \`<div class="describe-panel">
+          <div class="describe-header">
+            <span class="describe-name">\${escapeHtml(desc.name)}</span>
+            <span class="describe-category">builtin</span>
+          </div>
+          <div class="describe-desc">Built-in function</div>
+        </div>\`;
+      }
+
+      if (desc.isLambda) {
+        return \`<div class="describe-panel">
+          <div class="describe-header">
+            <span class="describe-name">\${escapeHtml(desc.name)}</span>
+            <span class="describe-category">lambda</span>
+          </div>
+          <div class="describe-desc">User-defined function</div>
+          <div class="describe-section">
+            <div class="describe-section-title">Parameters</div>
+            <div>\${desc.params.map(p => '<code>' + escapeHtml(p) + '</code>').join(', ') || 'none'}</div>
+          </div>
+        </div>\`;
+      }
+
+      // WASM function with semantic metadata
+      const sem = desc.semantic || {};
+      let html = '<div class="describe-panel">';
+
+      // Header with name and category
+      html += '<div class="describe-header">';
+      html += \`<img class="fn-icon" src="/api/icon/\${desc.hash}" style="width:64px;height:64px;border-radius:8px;" onerror="this.style.display='none'">\`;
+      html += \`<span class="describe-name">\${escapeHtml(desc.name || 'unknown')}</span>\`;
+      if (sem.category) {
+        html += \`<span class="describe-category">\${escapeHtml(sem.category)}</span>\`;
+      }
+      html += '</div>';
+
+      // Description
+      if (sem.description) {
+        html += \`<div class="describe-desc">\${escapeHtml(sem.description)}</div>\`;
+      } else if (desc.intent) {
+        html += \`<div class="describe-desc">\${escapeHtml(desc.intent)}</div>\`;
+      }
+
+      // Signature
+      if (desc.signature) {
+        html += \`<div style="font-family:'JetBrains Mono',monospace;color:var(--text-muted);margin-bottom:0.5rem;">\${escapeHtml(desc.signature)}</div>\`;
+      }
+
+      // Inputs
+      if (sem.inputs && sem.inputs.length > 0) {
+        html += '<div class="describe-section">';
+        html += '<div class="describe-section-title">Inputs</div>';
+        for (const inp of sem.inputs) {
+          html += '<div class="describe-input">';
+          html += \`<span class="describe-input-name">\${escapeHtml(inp.name || '?')}</span>\`;
+          html += \`<span class="describe-input-type">\${escapeHtml(inp.semantic_type || inp.wasm_type || '?')}</span>\`;
+          if (inp.wasm_type && inp.wasm_type !== inp.semantic_type) {
+            html += \`<span class="describe-input-wasm">(\${escapeHtml(inp.wasm_type)})</span>\`;
+          }
+          if (inp.range) {
+            html += \`<span class="describe-input-wasm">[\${inp.range[0]}, \${inp.range[1]}]</span>\`;
+          }
+          if (inp.description) {
+            html += \`<span class="describe-input-desc">\${escapeHtml(inp.description)}</span>\`;
+          }
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+
+      // Output
+      if (sem.output) {
+        html += '<div class="describe-section">';
+        html += '<div class="describe-section-title">Returns</div>';
+        html += \`<span class="describe-input-type">\${escapeHtml(sem.output.semantic_type || sem.output.wasm_type || '?')}</span>\`;
+        if (sem.output.wasm_type && sem.output.wasm_type !== sem.output.semantic_type) {
+          html += \` <span class="describe-input-wasm">(\${escapeHtml(sem.output.wasm_type)})</span>\`;
+        }
+        if (sem.output.description) {
+          html += \` — \${escapeHtml(sem.output.description)}\`;
+        }
+        html += '</div>';
+      }
+
+      // Algorithm and complexity
+      if (sem.algorithm || sem.time_complexity || sem.space_complexity) {
+        html += '<div class="describe-meta">';
+        if (sem.algorithm) {
+          html += \`<div class="describe-meta-item">Algorithm: <span>\${escapeHtml(sem.algorithm)}</span></div>\`;
+        }
+        if (sem.time_complexity) {
+          html += \`<div class="describe-meta-item">Time: <span>\${escapeHtml(sem.time_complexity)}</span></div>\`;
+        }
+        if (sem.space_complexity) {
+          html += \`<div class="describe-meta-item">Space: <span>\${escapeHtml(sem.space_complexity)}</span></div>\`;
+        }
+        html += '</div>';
+      }
+
+      // Examples
+      if (sem.examples && sem.examples.length > 0) {
+        html += '<div class="describe-section">';
+        html += '<div class="describe-section-title">Examples</div>';
+        for (const ex of sem.examples.slice(0, 3)) {
+          const args = ex.inputs.map(String).join(' ');
+          html += \`<div class="describe-example">(\${escapeHtml(desc.name)} \${escapeHtml(args)}) → <span class="result">\${escapeHtml(String(ex.output))}</span></div>\`;
+        }
+        html += '</div>';
+      }
+
+      // Properties
+      const props = [];
+      if (sem.pure) props.push({ name: 'pure', active: true });
+      if (sem.deterministic) props.push({ name: 'deterministic', active: true });
+      if (props.length > 0) {
+        html += '<div class="describe-props">';
+        for (const p of props) {
+          html += \`<span class="describe-prop\${p.active ? ' pure' : ''}">\${p.active ? '✓ ' : ''}\${p.name}</span>\`;
+        }
+        html += '</div>';
+      }
+
+      // Size
+      html += \`<div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-muted);">\${desc.size || '?'} bytes WASM · \${escapeHtml(desc.hash?.slice(0, 12) || '?')}...</div>\`;
+
+      html += '</div>';
+      return html;
     }
 
     // Colormaps for heatmap rendering
