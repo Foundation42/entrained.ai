@@ -340,8 +340,8 @@ export function replPage(): string {
       flex: 1;
     }
 
-    /* Mandelbrot canvas */
-    .mandelbrot-canvas {
+    /* Auto-render canvas */
+    .render-canvas, .mandelbrot-canvas {
       width: 100%;
       max-width: 600px;
       aspect-ratio: 3/2;
@@ -350,7 +350,7 @@ export function replPage(): string {
       cursor: crosshair;
     }
 
-    .mandelbrot-info {
+    .render-info, .mandelbrot-info {
       font-size: 0.75rem;
       color: var(--text-muted);
       margin-top: 0.5rem;
@@ -364,6 +364,24 @@ export function replPage(): string {
     .fn-sig {
       font-size: 0.8rem;
       color: var(--text-secondary);
+    }
+
+    .fn-category {
+      font-size: 0.7rem;
+      color: var(--success);
+      background: rgba(63, 185, 80, 0.15);
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      display: inline-block;
+      margin-top: 0.25rem;
+    }
+
+    .renderer-type {
+      font-size: 0.7rem;
+      color: var(--warning);
+      background: rgba(210, 153, 34, 0.15);
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
     }
 
     /* Add cell button */
@@ -1115,6 +1133,18 @@ export function replPage(): string {
         if (!resp.ok) throw new Error((await resp.json()).error || 'Compile failed');
         const result = await resp.json();
 
+        // Fetch semantic metadata from registry
+        let semantic = null;
+        try {
+          const registryResp = await fetch('/api/registry/' + result.hash);
+          if (registryResp.ok) {
+            const registryData = await registryResp.json();
+            semantic = registryData.metadata?.semantic || null;
+          }
+        } catch (e) {
+          console.warn('Failed to fetch semantic metadata:', e);
+        }
+
         const wasmResp = await fetch('/api/binary/' + result.hash);
         if (!wasmResp.ok) throw new Error('Failed to fetch WASM');
         const wasmBinary = await wasmResp.arrayBuffer();
@@ -1166,7 +1196,8 @@ export function replPage(): string {
           wasmFunc,
           memory,
           heapBase,
-          cached: result.cached
+          cached: result.cached,
+          semantic  // Include semantic metadata for auto-rendering
         };
         this.wasmCache.set(intent, fn);
         return fn;
@@ -1463,8 +1494,17 @@ export function replPage(): string {
       } else if (output.type === 'compile') {
         // Compilation result with function card
         const data = output.value;
-        const isMandel = data.expanded_intent && data.expanded_intent.toLowerCase().includes('mandelbrot');
-        const canvasId = 'mandel-' + data.hash;
+        const semantic = data.semantic;
+        const rendererType = semantic?.renderer?.type || 'value';
+        const canvasId = 'render-' + data.hash;
+
+        // Determine what render buttons/controls to show
+        const hasHeatmap = rendererType === 'heatmap';
+        const hasViz = hasHeatmap; // Extend for other types later
+
+        // Show semantic info if available
+        const category = semantic?.category || 'unknown';
+        const description = semantic?.description || '';
 
         content += \`
           <div class="output-result">Compiled: \${escapeHtml(data.expanded_intent || '')}</div>
@@ -1473,14 +1513,16 @@ export function replPage(): string {
             <div class="fn-info">
               <div class="fn-name">\${data.hash.slice(0, 12)}...</div>
               <div class="fn-sig">\${escapeHtml(data.signature || '?')}</div>
+              \${semantic ? '<div class="fn-category">' + escapeHtml(category) + '</div>' : ''}
             </div>
           </div>
           <div class="output-meta">
             <span>\${data.size} bytes</span>
             <span>\${data.cached ? 'cached' : 'compiled'}</span>
-            \${isMandel ? '<button class="cell-btn" onclick="triggerMandelbrotRender(\\'' + data.hash + '\\', \\'' + canvasId + '\\')">Render</button>' : ''}
+            <span class="renderer-type">\${rendererType}</span>
+            \${hasHeatmap ? '<button class="cell-btn" onclick="triggerAutoRender(\\'' + data.hash + '\\', \\'' + canvasId + '\\')">Render</button>' : ''}
           </div>
-          \${isMandel ? '<canvas id="' + canvasId + '" class="mandelbrot-canvas" style="display:none;margin-top:0.5rem;"></canvas><div id="' + canvasId + '-info" class="mandelbrot-info"></div>' : ''}
+          \${hasViz ? '<canvas id="' + canvasId + '" class="render-canvas" style="display:none;margin-top:0.5rem;"></canvas><div id="' + canvasId + '-info" class="render-info"></div>' : ''}
         \`;
       } else {
         content = \`<div class="output-result">\${escapeHtml(formatValue(output.value))}</div>\`;
@@ -1514,42 +1556,80 @@ export function replPage(): string {
       return String(value);
     }
 
-    // Viridis-like colormap for mandelbrot
-    function iterationToColor(iter, maxIter) {
-      if (iter >= maxIter) return [0, 0, 0]; // Black for points in set
-      const t = iter / maxIter;
-      // Simplified viridis-ish gradient
-      const r = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 3)));
-      const g = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 2)));
-      const b = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 1)));
-      return [
-        Math.max(0, Math.min(255, r + Math.floor(70 * t))),
-        Math.max(0, Math.min(255, g + Math.floor(30 * t))),
-        Math.max(0, Math.min(255, 100 + b))
-      ];
-    }
+    // Colormaps for heatmap rendering
+    const COLORMAPS = {
+      viridis: (t) => {
+        // Viridis-like gradient
+        const r = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 3)));
+        const g = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 2)));
+        const b = Math.floor(255 * Math.min(1, 1.5 - Math.abs(4 * t - 1)));
+        return [
+          Math.max(0, Math.min(255, r + Math.floor(70 * t))),
+          Math.max(0, Math.min(255, g + Math.floor(30 * t))),
+          Math.max(0, Math.min(255, 100 + b))
+        ];
+      },
+      magma: (t) => {
+        const r = Math.floor(255 * Math.min(1, t * 2));
+        const g = Math.floor(255 * Math.max(0, t - 0.3) * 1.5);
+        const b = Math.floor(255 * Math.min(1, 0.3 + t * 0.7));
+        return [r, g, b];
+      },
+      plasma: (t) => {
+        const r = Math.floor(255 * Math.min(1, 0.1 + t * 0.9));
+        const g = Math.floor(255 * Math.sin(t * Math.PI));
+        const b = Math.floor(255 * (1 - t));
+        return [r, g, b];
+      },
+      grayscale: (t) => {
+        const v = Math.floor(255 * t);
+        return [v, v, v];
+      },
+      rainbow: (t) => {
+        const r = Math.floor(255 * Math.sin(t * Math.PI));
+        const g = Math.floor(255 * Math.sin(t * Math.PI + 2));
+        const b = Math.floor(255 * Math.sin(t * Math.PI + 4));
+        return [Math.abs(r), Math.abs(g), Math.abs(b)];
+      }
+    };
 
-    // Render mandelbrot to canvas
-    function renderMandelbrot(canvasId, mandelFunc, maxIter = 256) {
+    // Generic heatmap renderer using semantic metadata
+    function renderHeatmap(canvasId, func, semantic, extraArgs = []) {
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
 
-      const width = canvas.width = 600;
-      const height = canvas.height = 400;
+      const renderer = semantic?.renderer || {};
+      const domain = renderer.domain || {};
+      const resolution = renderer.resolution || [600, 400];
+      const colormap = COLORMAPS[renderer.colormap] || COLORMAPS.viridis;
+
+      // Get domain ranges from metadata or use defaults
+      const xRange = domain.x?.range || [-2.5, 1.0];
+      const yRange = domain.y?.range || [-1.5, 1.5];
+
+      // Find max value for normalization (from iteration_limit input or output range)
+      const iterInput = semantic?.inputs?.find(i => i.semantic_type === 'iteration_limit');
+      const maxValue = iterInput?.default || semantic?.output?.range?.[1] || 256;
+
+      const width = canvas.width = resolution[0];
+      const height = canvas.height = resolution[1];
       const ctx = canvas.getContext('2d');
       const imageData = ctx.createImageData(width, height);
 
-      // Mandelbrot bounds
-      const xMin = -2.5, xMax = 1.0;
-      const yMin = -1.2, yMax = 1.2;
+      const [xMin, xMax] = xRange;
+      const [yMin, yMax] = yRange;
 
       for (let py = 0; py < height; py++) {
         for (let px = 0; px < width; px++) {
-          const cx = xMin + (px / width) * (xMax - xMin);
-          const cy = yMin + (py / height) * (yMax - yMin);
+          const x = xMin + (px / width) * (xMax - xMin);
+          const y = yMin + (py / height) * (yMax - yMin);
 
-          const iter = mandelFunc(cx, cy, maxIter);
-          const [r, g, b] = iterationToColor(iter, maxIter);
+          // Call function with x, y, and any extra args (like max_iter)
+          const value = func(x, y, ...extraArgs);
+
+          // Normalize to 0-1, handle "in set" case
+          const t = value >= maxValue ? 0 : value / maxValue;
+          const [r, g, b] = t === 0 ? [0, 0, 0] : colormap(t);
 
           const idx = (py * width + px) * 4;
           imageData.data[idx] = r;
@@ -1562,18 +1642,138 @@ export function replPage(): string {
       ctx.putImageData(imageData, 0, 0);
     }
 
-    // Check if a function is mandelbrot-like
+    // Legacy: render mandelbrot (for backwards compat)
+    function renderMandelbrot(canvasId, mandelFunc, maxIter = 256) {
+      renderHeatmap(canvasId, mandelFunc, {
+        renderer: {
+          domain: {
+            x: { range: [-2.5, 1.0] },
+            y: { range: [-1.2, 1.2] }
+          },
+          colormap: 'viridis',
+          resolution: [600, 400]
+        },
+        inputs: [{ semantic_type: 'iteration_limit', default: maxIter }]
+      }, [maxIter]);
+    }
+
+    // Render waveform (line graph) for 1D functions
+    function renderWaveform(canvasId, data, semantic) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+
+      const width = canvas.width = 600;
+      const height = canvas.height = 200;
+      const ctx = canvas.getContext('2d');
+
+      // Clear
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, width, height);
+
+      if (!Array.isArray(data) || data.length === 0) return;
+
+      // Find min/max for scaling
+      const values = data.map(Number);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min || 1;
+
+      // Draw grid
+      ctx.strokeStyle = '#30363d';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = (height / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      // Draw waveform
+      ctx.strokeStyle = '#58a6ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+
+      for (let i = 0; i < values.length; i++) {
+        const x = (i / (values.length - 1)) * width;
+        const y = height - ((values[i] - min) / range) * (height - 20) - 10;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // Draw value labels
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '11px JetBrains Mono';
+      ctx.fillText(max.toFixed(1), 5, 15);
+      ctx.fillText(min.toFixed(1), 5, height - 5);
+    }
+
+    // Render histogram (bar chart)
+    function renderHistogram(canvasId, data, semantic) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+
+      const width = canvas.width = 600;
+      const height = canvas.height = 200;
+      const ctx = canvas.getContext('2d');
+
+      // Clear
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, width, height);
+
+      if (!Array.isArray(data) || data.length === 0) return;
+
+      const values = data.map(Number);
+      const max = Math.max(...values);
+      const barWidth = (width - 20) / values.length;
+      const padding = 2;
+
+      // Draw bars
+      ctx.fillStyle = '#3fb950';
+      for (let i = 0; i < values.length; i++) {
+        const barHeight = (values[i] / max) * (height - 30);
+        const x = 10 + i * barWidth + padding;
+        const y = height - barHeight - 10;
+        ctx.fillRect(x, y, barWidth - padding * 2, barHeight);
+      }
+
+      // Draw baseline
+      ctx.strokeStyle = '#30363d';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(10, height - 10);
+      ctx.lineTo(width - 10, height - 10);
+      ctx.stroke();
+    }
+
+    // Get renderer type from semantic metadata
+    function getRendererType(semantic) {
+      return semantic?.renderer?.type || 'value';
+    }
+
+    // Check if function should have auto-render based on semantic metadata
+    function hasAutoRender(fn) {
+      if (!fn?.semantic?.renderer) return false;
+      const type = fn.semantic.renderer.type;
+      return type === 'heatmap' || type === 'waveform' || type === 'histogram';
+    }
+
+    // Check if a function is mandelbrot-like (legacy fallback)
     function isMandelbrotFunc(fn) {
       if (!fn || !fn.intent) return false;
+      // First check semantic metadata
+      if (fn.semantic?.renderer?.type === 'heatmap') return true;
+      // Fallback to intent matching
       const intent = fn.intent.toLowerCase();
       return intent.includes('mandelbrot') || intent.includes('mandel');
     }
 
-    // Store mandelbrot functions for rendering
-    let mandelbrotFuncs = {};
+    // Store functions for rendering
+    let renderFuncs = {};
 
-    // Trigger mandelbrot rendering
-    async function triggerMandelbrotRender(hash, canvasId) {
+    // Trigger auto-rendering based on semantic metadata
+    async function triggerAutoRender(hash, canvasId) {
       const canvas = document.getElementById(canvasId);
       const info = document.getElementById(canvasId + '-info');
       if (!canvas) return;
@@ -1589,13 +1789,33 @@ export function replPage(): string {
         return;
       }
 
+      const semantic = fn.semantic;
+      const rendererType = semantic?.renderer?.type || 'value';
+
       // Render asynchronously to not block UI
       setTimeout(() => {
         const start = Date.now();
-        renderMandelbrot(canvasId, fn.wasmFunc, 256);
-        const elapsed = Date.now() - start;
-        if (info) info.textContent = \`Rendered 600x400 = 240,000 WASM calls in \${elapsed}ms\`;
+
+        if (rendererType === 'heatmap') {
+          // Get default max_iter from semantic metadata
+          const iterInput = semantic?.inputs?.find(i => i.semantic_type === 'iteration_limit');
+          const maxIter = iterInput?.default || 256;
+          const resolution = semantic?.renderer?.resolution || [600, 400];
+
+          renderHeatmap(canvasId, fn.wasmFunc, semantic, [maxIter]);
+
+          const elapsed = Date.now() - start;
+          const pixels = resolution[0] * resolution[1];
+          if (info) info.textContent = \`Rendered \${resolution[0]}x\${resolution[1]} = \${pixels.toLocaleString()} WASM calls in \${elapsed}ms\`;
+        } else {
+          if (info) info.textContent = \`Renderer type '\${rendererType}' not yet supported\`;
+        }
       }, 10);
+    }
+
+    // Legacy: trigger mandelbrot rendering (for backwards compat)
+    async function triggerMandelbrotRender(hash, canvasId) {
+      triggerAutoRender(hash, canvasId);
     }
 
     // Update cell content
@@ -1632,6 +1852,7 @@ export function replPage(): string {
             signature: result.signature,
             size: result.size,
             cached: result.cached,
+            semantic: result.semantic,  // Include semantic metadata for auto-rendering
           };
         }
 
