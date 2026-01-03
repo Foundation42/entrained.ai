@@ -2463,6 +2463,16 @@ export function replPage(): string {
         ]
       },
       {
+        title: 'String Operations',
+        desc: 'UTF-8 string manipulation',
+        cells: [
+          '(string-concat "Hello" " " "World!")',
+          '(string-split "a,b,c,d" ",")',
+          '(string-join (list "x" "y" "z") "-")',
+          '(map string-upcase (string-split "the quick brown fox" " "))'
+        ]
+      },
+      {
         title: 'Mandelbrot',
         desc: 'Fractal heatmap with auto-render',
         cells: [
