@@ -1531,11 +1531,27 @@ export function replPage(): string {
       // Register hover provider for function documentation
       monaco.languages.registerHoverProvider('prometheus-lisp', {
         provideHover: (model, position) => {
-          // Get the word at hover position
-          const wordInfo = model.getWordAtPosition(position);
-          if (!wordInfo) return null;
+          // Get the LISP identifier at hover position (including -, ?, !, >, <, *, etc.)
+          const line = model.getLineContent(position.lineNumber);
+          const col = position.column - 1; // 0-based
 
-          const word = wordInfo.word;
+          // LISP identifier chars
+          const isIdentChar = (c) => c && /[a-zA-Z0-9_\\-?!<>=*+/]/.test(c);
+
+          if (!isIdentChar(line[col])) return null;
+
+          // Scan backwards and forwards to find full identifier
+          let start = col;
+          let end = col;
+          while (start > 0 && isIdentChar(line[start - 1])) start--;
+          while (end < line.length - 1 && isIdentChar(line[end + 1])) end++;
+
+          const word = line.slice(start, end + 1);
+          if (!word) return null;
+
+          // Create range for hover highlight (1-based columns)
+          const wordStart = start + 1;
+          const wordEnd = end + 2;
 
           // Try to look up in the evaluator's environment
           try {
@@ -1632,7 +1648,7 @@ export function replPage(): string {
               }
 
               return {
-                range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                range: new monaco.Range(position.lineNumber, wordStart, position.lineNumber, wordEnd),
                 contents: [{ value: lines.join('\\n') }]
               };
             }
@@ -1647,7 +1663,7 @@ export function replPage(): string {
               if (val.size) lines.push(\`Size: \${val.size} bytes\`);
 
               return {
-                range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                range: new monaco.Range(position.lineNumber, wordStart, position.lineNumber, wordEnd),
                 contents: [{ value: lines.join('\\n') }]
               };
             }
@@ -1656,7 +1672,7 @@ export function replPage(): string {
             if (val instanceof Lambda) {
               const params = val.params.map(p => p.name).join(' ');
               return {
-                range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+                range: new monaco.Range(position.lineNumber, wordStart, position.lineNumber, wordEnd),
                 contents: [{ value: \`\\\`\\\`lisp\\n(lambda (\${params}) ...)\\n\\\`\\\`\\\`\\nUser-defined function\` }]
               };
             }
@@ -1717,7 +1733,7 @@ export function replPage(): string {
 
           if (builtinDocs[word]) {
             return {
-              range: new monaco.Range(position.lineNumber, wordInfo.startColumn, position.lineNumber, wordInfo.endColumn),
+              range: new monaco.Range(position.lineNumber, wordStart, position.lineNumber, wordEnd),
               contents: [{ value: builtinDocs[word] }]
             };
           }
