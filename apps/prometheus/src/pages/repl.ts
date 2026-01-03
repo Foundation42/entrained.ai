@@ -1139,7 +1139,9 @@ export function replPage(): string {
           const registryResp = await fetch('/api/registry/' + result.hash);
           if (registryResp.ok) {
             const registryData = await registryResp.json();
-            semantic = registryData.metadata?.semantic || null;
+            const meta = registryData.metadata || {};
+            // Check for backfilled semantic key, or use direct metadata
+            semantic = meta.semantic || (meta.renderer ? meta : null);
           }
         } catch (e) {
           console.warn('Failed to fetch semantic metadata:', e);
