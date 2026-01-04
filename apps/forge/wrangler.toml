@@ -1,0 +1,96 @@
+name = "forge"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Enable workers.dev URL for testing
+workers_dev = true
+
+# Enable container logs
+[observability]
+enabled = true
+
+[[routes]]
+pattern = "forge.entrained.ai"
+custom_domain = true
+zone_name = "entrained.ai"
+
+# R2 bucket for storing artifacts (TSX source, compiled JS, manifests)
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "forge-artifacts"
+
+# KV namespace for component metadata (like Prometheus registry)
+[[kv_namespaces]]
+binding = "REGISTRY"
+id = "535cffbb7d6247808f6573c018c090b2"
+
+# KV namespace for component storage (instance/class/global data)
+[[kv_namespaces]]
+binding = "STORAGE"
+id = "6c8145c6607e48c4bfcb83748ec458ea"
+
+# Workers AI for embeddings
+[ai]
+binding = "AI"
+
+# Vectorize for semantic search
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "forge-components"
+
+# Forge TSX Generation Container
+# Pipeline: Description -> Gemini -> Manifest -> TSX -> WebComponent JS
+[[containers]]
+class_name = "ForgeGenerator"
+image = "./container/Dockerfile"
+max_instances = 1
+instance_type = "standard-1"
+
+# Durable Object binding for container
+[[durable_objects.bindings]]
+name = "GENERATOR"
+class_name = "ForgeGenerator"
+
+# Durable Object for job tracking
+[[durable_objects.bindings]]
+name = "FORGE_JOBS"
+class_name = "ForgeJob"
+
+# Queue for async generation
+[[queues.producers]]
+queue = "forge-generate"
+binding = "GENERATE_QUEUE"
+
+[[queues.consumers]]
+queue = "forge-generate"
+max_batch_size = 1
+max_batch_timeout = 0
+max_retries = 3
+dead_letter_queue = "forge-generate-dlq"
+
+# Migration for Durable Objects
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ForgeGenerator", "ForgeJob"]
+
+# Cron trigger to keep container warm (prevents cold starts)
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+GEMINI_MODEL = "gemini-3-flash-preview"
+
+# Development overrides
+[env.dev]
+name = "forge-dev"
+
+[env.dev.vars]
+ENVIRONMENT = "development"
+
+# Production overrides
+[env.production]
+name = "forge"
+
+[env.production.vars]
+ENVIRONMENT = "production"
