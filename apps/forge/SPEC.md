@@ -330,36 +330,261 @@ DELETE /api/forge/{component-id}/global/data/{key}
 
 ---
 
-## MCP Interface
+## MCP Interface (Forge Architect)
 
-Thin wrappers over HTTP API for conversational use:
+The Forge MCP server enables an AI agent to act as a **Component Architect** - discovering, creating, and composing WebComponents to build complete solutions.
+
+### Design Philosophy
+
+The architect should be able to:
+1. **Discover** - Find existing components via semantic search
+2. **Investigate** - Understand component interfaces (props, events, methods)
+3. **Plan** - Determine what exists, what's missing, what needs wiring
+4. **Create** - Generate new components to fill gaps
+5. **Compose** - Wire components together into working solutions
+
+### Tools
+
+#### Discovery & Investigation
+
+```typescript
+forge_search({
+  query: string,           // Natural language search
+  limit?: number           // Max results (default: 10)
+}): Array<{
+  id: string,
+  tag: string,
+  description: string,
+  type: "app" | "library",
+  version: number,
+  similarity: number       // 0-1 relevance score
+}>
+
+forge_get_manifest({
+  id: string
+}): {
+  manifest: ForgeManifest,  // Full manifest with props, events, parts, etc.
+  url: string               // Viewer URL
+}
+
+forge_get_source({
+  id: string
+}): {
+  source: string,           // Full TSX source code
+  manifest: ForgeManifest
+}
+
+forge_get_types({
+  id: string
+}): {
+  types: string             // TypeScript .d.ts definitions
+}
+```
+
+#### Creation & Modification
 
 ```typescript
 forge_create({
-  description: string,
-  initial_code?: string,
-  imports?: string[],
-  exports?: string[]
-}): { id, url, version, embedding }
+  description: string,      // Natural language description
+  hints?: {                 // Optional guidance for the AI
+    props?: string[],       // Suggested prop names
+    events?: string[],      // Suggested event names
+    style?: string,         // Visual style hints
+    similar_to?: string     // Component ID to use as reference
+  }
+}): {
+  id: string,
+  url: string,
+  version: number,
+  manifest: ForgeManifest
+}
 
 forge_update({
   id: string,
-  changes: string
-}): { id, url, version }  // Returns NEW version
+  changes: string           // Natural language changes to make
+}): {
+  id: string,               // NEW version ID
+  url: string,
+  version: number,
+  previous_version: string
+}
 
-forge_get({
-  id: string
-}): { manifest, source }
-
-forge_search({
-  query: string,
-  limit?: number
-}): Array<{ id, url, description, tags }>
-
-forge_source_update({
+forge_update_source({
   id: string,
-  source: string
-}): { id, url, version }  // Manual source edit
+  source: string            // Complete new TSX source
+}): {
+  id: string,               // NEW version ID
+  url: string,
+  version: number
+}
+
+forge_retranspile({
+  id: string                // Re-run transpiler (fixes build issues)
+}): {
+  id: string,
+  success: boolean,
+  js_size: number
+}
+```
+
+#### Composition
+
+The key tool for building multi-component solutions:
+
+```typescript
+forge_compose({
+  name: string,                    // Name for the composed solution
+  description: string,             // What this composition does
+  components: Array<{
+    id: string,                    // Component to include
+    as?: string                    // Optional alias for this instance
+  }>,
+  layout: string,                  // HTML/JSX layout template
+  wiring: Array<{
+    source: {
+      component: string,           // Component alias or tag
+      event: string                // Event name to listen for
+    },
+    target: {
+      component: string,           // Component alias or tag
+      action: string               // Method to call or prop to set
+    },
+    transform?: string             // Optional JS expression to transform event.detail
+  }>,
+  styles?: string                  // Additional CSS for layout
+}): {
+  id: string,                      // ID of the new composed component
+  url: string,
+  bundle_url: string,              // URL that loads all dependencies
+  manifest: ForgeManifest
+}
+```
+
+**Example composition:**
+
+```typescript
+forge_compose({
+  name: "celebration-app",
+  description: "Fireworks display with control panel",
+  components: [
+    { id: "fireworks-display-v2-bcfc", as: "fireworks" },
+    { id: "celebration-panel-v1-5b7d", as: "panel" }
+  ],
+  layout: `
+    <div style="position: relative; width: 100vw; height: 100vh;">
+      <fireworks-display id="fireworks" style="position: absolute; inset: 0;"></fireworks-display>
+      <celebration-panel id="panel"></celebration-panel>
+    </div>
+  `,
+  wiring: [
+    {
+      source: { component: "panel", event: "celebrate-burst" },
+      target: { component: "fireworks", action: "launchAt" },
+      transform: "({ x, y, count }) => ({ x, y, color: randomColor() })"
+    }
+  ],
+  styles: `
+    :host { display: block; }
+    fireworks-display { z-index: 1; }
+    celebration-panel { z-index: 2; }
+  `
+})
+```
+
+### Bundle Endpoint
+
+Compositions need to load multiple components. The bundle endpoint handles this:
+
+```
+GET /api/forge/bundle?ids=id1,id2,id3
+Response: Single JS file with all components defined
+
+GET /api/forge/bundle/{composition-id}
+Response: Pre-built bundle for a composition
+```
+
+### Component Interface Enhancement
+
+To support composition, components should expose their **public methods** in the manifest:
+
+```typescript
+interface ComponentDef {
+  name: string;
+  tag: string;
+  exported: boolean;
+  props: PropDef[];
+  events?: EventDef[];
+  methods?: MethodDef[];        // NEW: Public methods for composition
+}
+
+interface MethodDef {
+  name: string;                 // "launchAt"
+  params: Array<{
+    name: string,
+    type: string
+  }>;
+  description?: string;         // "Launch a firework at the specified position"
+}
+```
+
+### Resources (Read-only)
+
+```typescript
+// List all components (paginated)
+forge://components
+forge://components?cursor={cursor}
+
+// Individual component
+forge://component/{id}
+forge://component/{id}/source
+forge://component/{id}/manifest
+forge://component/{id}/types
+
+// Search index metadata
+forge://stats
+```
+
+### Architect Workflow
+
+Typical flow for an AI architect building a solution:
+
+```
+1. User: "Build me a celebration page with fireworks and controls"
+
+2. Architect: forge_search({ query: "fireworks display animation" })
+   -> Finds fireworks-display-v2-bcfc
+
+3. Architect: forge_search({ query: "control panel buttons" })
+   -> Finds celebration-panel-v1-5b7d
+
+4. Architect: forge_get_manifest({ id: "fireworks-display-v2-bcfc" })
+   -> Gets props, events, methods
+
+5. Architect: forge_get_manifest({ id: "celebration-panel-v1-5b7d" })
+   -> Gets props, events - sees it emits "celebrate-burst"
+
+6. Architect: Notices fireworks needs a "launchAt" method but doesn't have one
+   -> forge_update({ id: "fireworks-display-v2-bcfc",
+        changes: "Add a public launchAt(x, y, color) method" })
+
+7. Architect: forge_compose({ ... wire them together ... })
+   -> Returns working composed solution
+
+8. User gets URL to fully working celebration page
+```
+
+### Error Handling
+
+All tools return errors in a consistent format:
+
+```typescript
+{
+  error: {
+    code: "NOT_FOUND" | "TRANSPILE_FAILED" | "INVALID_COMPOSITION" | ...,
+    message: string,
+    details?: any
+  }
+}
 ```
 
 ---
