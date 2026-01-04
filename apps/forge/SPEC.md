@@ -587,6 +587,32 @@ All tools return errors in a consistent format:
 }
 ```
 
+### Implementation
+
+The Forge MCP server is implemented in `apps/forge-mcp/`. To add it to Claude Code:
+
+```bash
+claude mcp add forge -- node /path/to/apps/forge-mcp/dist/index.js
+```
+
+Or configure manually in `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "forge": {
+      "command": "node",
+      "args": ["/path/to/apps/forge-mcp/dist/index.js"],
+      "env": {
+        "FORGE_API_BASE": "https://forge.entrained.ai"
+      }
+    }
+  }
+}
+```
+
+The MCP server provides **conversational responses** - not just raw JSON, but rich context with suggestions for next steps, helping AI agents reason naturally about component discovery and composition.
+
 ---
 
 ## LLM System Prompt

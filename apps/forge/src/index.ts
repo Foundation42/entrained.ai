@@ -304,6 +304,269 @@ app.get('/api/forge/stats', async (c) => {
   return c.json(stats);
 });
 
+// ================================
+// Component Bundling
+// ================================
+
+// Bundle multiple components into a single JS file
+app.get('/api/forge/bundle', async (c) => {
+  const idsParam = c.req.query('ids');
+  if (!idsParam) {
+    return c.json({ error: 'Missing ids parameter' }, 400);
+  }
+
+  const ids = idsParam.split(',').map(id => id.trim());
+  const registry = new Registry(c.env.REGISTRY, c.env.ARTIFACTS);
+
+  // Collect all component JS
+  const components: string[] = [];
+  const errors: Array<{ id: string; error: string }> = [];
+
+  for (const id of ids) {
+    const js = await registry.getComponentJS(id);
+    if (js) {
+      components.push(`// Component: ${id}\n${js}`);
+    } else {
+      errors.push({ id, error: 'Not found' });
+    }
+  }
+
+  if (errors.length > 0 && components.length === 0) {
+    return c.json({ error: 'No components found', details: errors }, 404);
+  }
+
+  // Concatenate all components
+  const bundle = components.join('\n\n');
+
+  return c.text(bundle, 200, {
+    'Content-Type': 'application/javascript',
+    'Cache-Control': 'public, max-age=3600', // 1 hour cache for bundles
+  });
+});
+
+// ================================
+// Component Composition
+// ================================
+
+interface ComposeRequest {
+  name: string;
+  description: string;
+  components: Array<{ id: string; as?: string }>;
+  layout: string;
+  wiring: Array<{
+    source: { component: string; event: string };
+    target: { component: string; action: string };
+    transform?: string;
+  }>;
+  styles?: string;
+}
+
+// Compose multiple components into a new solution
+app.post('/api/forge/compose', async (c) => {
+  const body = await c.req.json<ComposeRequest>();
+
+  if (!body.name || !body.description || !body.components?.length || !body.layout) {
+    return c.json({ error: 'Missing required fields: name, description, components, layout' }, 400);
+  }
+
+  const registry = new Registry(c.env.REGISTRY, c.env.ARTIFACTS);
+
+  // Verify all components exist and collect their manifests
+  const componentManifests: Array<{
+    id: string;
+    as: string;
+    manifest: import('./types').ForgeManifest;
+  }> = [];
+
+  for (const comp of body.components) {
+    const entry = await registry.get(comp.id);
+    if (!entry) {
+      return c.json({ error: `Component not found: ${comp.id}` }, 404);
+    }
+    componentManifests.push({
+      id: comp.id,
+      as: comp.as || entry.manifest.components[0]?.tag || comp.id,
+      manifest: entry.manifest,
+    });
+  }
+
+  // Generate wiring code
+  const wiringCode = body.wiring.map(wire => {
+    const transform = wire.transform || '(detail) => detail';
+    return `
+    // Wire: ${wire.source.component}.${wire.source.event} -> ${wire.target.component}.${wire.target.action}
+    document.getElementById('${wire.source.component}')?.addEventListener('${wire.source.event}', (e) => {
+      const detail = (${transform})(e.detail);
+      const target = document.getElementById('${wire.target.component}');
+      if (target && typeof target.${wire.target.action} === 'function') {
+        target.${wire.target.action}(detail);
+      }
+    });`;
+  }).join('\n');
+
+  // Generate the composed component TSX
+  const componentIds = body.components.map(c => c.id).join(',');
+  const bundleUrl = `/api/forge/bundle?ids=${componentIds}`;
+
+  // Create a tag name from the composition name
+  const tag = body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+  const composedSource = `import { ForgeComponent, Component } from 'forge';
+
+@Component({
+  tag: '${tag}',
+  props: {},
+  cssVariables: [],
+  parts: ['container']
+})
+class ${body.name.replace(/[^a-zA-Z0-9]/g, '')} extends ForgeComponent<{}> {
+  async onMount() {
+    // Setup event wiring
+    ${wiringCode || '// No wiring defined'}
+  }
+
+  render() {
+    return (
+      <div part="container" style={{ width: '100%', height: '100%' }}>
+        <style>
+          ${body.styles ? `{\`${body.styles.replace(/`/g, '\\`')}\`}` : ''}
+        </style>
+        ${body.layout}
+      </div>
+    );
+  }
+}
+
+export { ${body.name.replace(/[^a-zA-Z0-9]/g, '')} };
+`;
+
+  // Create the composed component using the generator
+  const generatorId = c.env.GENERATOR.idFromName('generator');
+  const generator = c.env.GENERATOR.get(generatorId);
+
+  const compileResponse = await generator.fetch('http://container/compile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: composedSource }),
+  });
+
+  if (!compileResponse.ok) {
+    const error = await compileResponse.text();
+    return c.json({ error: 'Failed to compile composition', details: error }, 500);
+  }
+
+  const compiled = await compileResponse.json() as { js: string; dts?: string };
+
+  // Generate ID and store
+  const id = registry.generateId(tag, 1);
+
+  const manifest: import('./types').ForgeManifest = {
+    id,
+    version: 1,
+    created_at: new Date().toISOString(),
+    provenance: {
+      source_type: 'manual',
+    },
+    description: body.description,
+    type: 'app',
+    components: [{
+      name: body.name.replace(/[^a-zA-Z0-9]/g, ''),
+      tag,
+      exported: true,
+      props: [],
+      events: [],
+    }],
+    imports: body.components.map(comp => ({
+      component_id: comp.id,
+      components: [componentManifests.find(m => m.id === comp.id)?.manifest.components[0]?.name || ''],
+    })),
+    artifacts: {
+      source_tsx: `${id}/source.tsx`,
+      component_js: `${id}/component.js`,
+    },
+  };
+
+  // Generate embedding
+  const embedResult = await c.env.AI.run('@cf/baai/bge-base-en-v1.5', {
+    text: body.description,
+  });
+  const embedding = (embedResult as { data?: number[][] }).data?.[0];
+
+  // Store the composition
+  await registry.put({
+    id,
+    manifest,
+    tsx_source: composedSource,
+    component_js: compiled.js,
+    type_defs: compiled.dts,
+    embedding,
+  });
+
+  // Index in Vectorize
+  if (embedding) {
+    await c.env.VECTORIZE.upsert([{
+      id,
+      values: embedding,
+      metadata: {
+        description: body.description,
+        type: 'app',
+        tag,
+        version: 1,
+      },
+    }]);
+  }
+
+  return c.json({
+    id,
+    url: `https://forge.entrained.ai/${id}`,
+    bundle_url: `https://forge.entrained.ai${bundleUrl}`,
+    manifest,
+  });
+});
+
+// Get bundle for a specific composition
+app.get('/api/forge/bundle/:id', async (c) => {
+  const id = c.req.param('id');
+  const registry = new Registry(c.env.REGISTRY, c.env.ARTIFACTS);
+
+  const entry = await registry.get(id);
+  if (!entry) {
+    return c.json({ error: 'Composition not found' }, 404);
+  }
+
+  // Get the composition's dependencies
+  const imports = entry.manifest.imports || [];
+  if (imports.length === 0) {
+    // Just return the component itself
+    const js = await registry.getComponentJS(id);
+    if (!js) {
+      return c.json({ error: 'Component JS not found' }, 404);
+    }
+    return c.text(js, 200, {
+      'Content-Type': 'application/javascript',
+      'Cache-Control': 'public, max-age=3600',
+    });
+  }
+
+  // Bundle all dependencies plus the composition itself
+  const allIds = [...imports.map(i => i.component_id), id];
+  const components: string[] = [];
+
+  for (const compId of allIds) {
+    const js = await registry.getComponentJS(compId);
+    if (js) {
+      components.push(`// Component: ${compId}\n${js}`);
+    }
+  }
+
+  const bundle = components.join('\n\n');
+
+  return c.text(bundle, 200, {
+    'Content-Type': 'application/javascript',
+    'Cache-Control': 'public, max-age=3600',
+  });
+});
+
 // Reindex all components into Vectorize
 app.post('/api/admin/reindex', async (c) => {
   const registry = new Registry(c.env.REGISTRY, c.env.ARTIFACTS);
