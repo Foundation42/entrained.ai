@@ -264,7 +264,7 @@ When a component emits events for parents to handle, document that behavior:
 3. **Accessibility**: Include ARIA labels, keyboard navigation
 4. **Responsive**: Use relative units, flexbox/grid
 5. **Performance**: Cache API calls in storage, debounce expensive operations
-6. **Styles object**: If using a `const styles = {...}` object, define it BEFORE the class (after imports/interfaces). JavaScript const is not hoisted, so defining it after the class causes "Cannot access before initialization" errors.
+6. **Styles object**: If using a styles object, define it BEFORE the class (after imports/interfaces). JavaScript const is not hoisted, so defining it after the class causes "Cannot access before initialization" errors.
 
 ## Output Format
 
