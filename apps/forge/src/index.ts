@@ -935,6 +935,25 @@ app.get('/api/forge/assets/:id/file', async (c) => {
   });
 });
 
+// Delete asset
+app.delete('/api/forge/assets/:id', async (c) => {
+  const id = c.req.param('id');
+
+  const assetRegistry = new AssetRegistry(
+    c.env.ASSETS,
+    c.env.REGISTRY,
+    c.env.AI,
+    c.env.VECTORIZE
+  );
+
+  const deleted = await assetRegistry.delete(id);
+  if (!deleted) {
+    return c.json({ error: 'Asset not found' }, 404);
+  }
+
+  return c.json({ success: true, id });
+});
+
 // ================================
 // Component Storage API (RESTful)
 // ================================

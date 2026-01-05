@@ -313,4 +313,41 @@ export class AssetRegistry {
 
     return results;
   }
+
+  // Delete an asset by ID
+  async delete(id: string): Promise<boolean> {
+    // Get metadata first
+    const metadata = await this.get(id);
+    if (!metadata) {
+      return false;
+    }
+
+    // Extract hash from ID (format: {hash}-{timestamp})
+    const hash = id.split('-')[0];
+
+    // Delete from R2
+    try {
+      await this.assets.delete(metadata.r2_key);
+      console.log(`[AssetRegistry] Deleted from R2: ${metadata.r2_key}`);
+    } catch (error) {
+      console.error(`[AssetRegistry] Failed to delete from R2:`, error);
+    }
+
+    // Delete from KV (both by ID and by hash)
+    await Promise.all([
+      this.registry.delete(`asset:${id}`),
+      this.registry.delete(`asset:hash:${hash}`),
+    ]);
+    console.log(`[AssetRegistry] Deleted from KV: asset:${id}, asset:hash:${hash}`);
+
+    // Delete from Vectorize
+    try {
+      await this.vectorize.deleteByIds([`asset:${id}`]);
+      console.log(`[AssetRegistry] Deleted from Vectorize: asset:${id}`);
+    } catch (error) {
+      console.error(`[AssetRegistry] Failed to delete from Vectorize:`, error);
+    }
+
+    return true;
+  }
 }
