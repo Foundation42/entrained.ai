@@ -473,6 +473,14 @@ const TOOLS = [
       required: ["query"],
     },
   },
+  {
+    name: "forge_about",
+    description: "Get comprehensive documentation about Forge - the WebComponent generation platform. Returns info about runtime capabilities, available tools, asset generation, storage APIs, and best practices. Call this first to understand what Forge can do.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 // Handle tool calls
@@ -729,6 +737,132 @@ async function handleToolCall(
       }
       const params = new URLSearchParams({ q: query, limit: String(limit) });
       return forgeApi(`/api/forge/assets/search?${params}`, env);
+    }
+
+    case "forge_about": {
+      return {
+        name: "Forge",
+        description: "AI-powered WebComponent generation platform. Create, compose, and deploy web components from natural language descriptions.",
+        url: "https://forge.entrained.ai",
+
+        tools: {
+          discovery: {
+            forge_search: "Find existing components by semantic search",
+            forge_get_manifest: "Get component interface (props, events, CSS vars, parts)",
+            forge_get_source: "View TSX source code",
+            forge_get_types: "Get TypeScript definitions",
+          },
+          creation: {
+            forge_create: "Create new component from description",
+            forge_update: "Modify component via natural language",
+            forge_update_source: "Direct TSX source replacement",
+            forge_retranspile: "Rebuild component JS",
+            forge_compose: "Wire multiple components together",
+            forge_debug: "Diagnose component issues",
+          },
+          assets: {
+            forge_create_image: "Generate images with Gemini (supports transparency, presets: icon/hero/sprite)",
+            forge_create_speech: "Generate speech with OpenAI TTS (13 voices, custom instructions)",
+            forge_search_assets: "Find existing generated assets",
+          },
+        },
+
+        runtime: {
+          description: "ForgeComponent extends HTMLElement with these capabilities:",
+
+          lifecycle: {
+            "onMount()": "Called after component is connected to DOM (async supported)",
+            "onUpdate(changedProps)": "Called when observed attributes change",
+            "onUnmount()": "Called before component is disconnected",
+            "render()": "Return JSX to render (called by this.update())",
+            "update()": "Re-render the component (uses DOM morphing to preserve focus)",
+          },
+
+          props: {
+            description: "Declare via @Component decorator, accessed via this.props",
+            example: "props: { count: { type: Number, default: 0 } }",
+          },
+
+          events: {
+            "emit(name, detail)": "Dispatch CustomEvent with bubbles and composed",
+            example: "this.emit('item-selected', { id: 123 })",
+          },
+
+          assetGeneration: {
+            "createImage(prompt, options?)": "Generate image, returns URL. Options: width, height, transparent, style (illustration/photo/3d/pixel-art), preset (icon/hero/sprite)",
+            "createSpeech(text, options?)": "Generate speech, returns URL. Options: voice (alloy/ash/ballad/coral/echo/fable/onyx/nova/sage/shimmer/verse/marin/cedar), speed, format, instructions",
+          },
+
+          storage: {
+            description: "Persistent KV storage with automatic debouncing (300ms)",
+            "this.instance": "Storage scoped to this component instance",
+            "this.class": "Storage shared across all instances of this component",
+            "this.global": "Storage shared across all components",
+            methods: "get(key), set(key, value), delete(key), list()",
+          },
+
+          styling: {
+            cssVariables: "Declare in @Component, users can override via CSS custom properties",
+            parts: "Expose internal elements via part attribute for ::part() styling",
+          },
+
+          dom: {
+            "query(selector)": "querySelector within shadow root",
+            "queryAll(selector)": "querySelectorAll within shadow root",
+          },
+        },
+
+        bestPractices: [
+          "Search for existing components before creating new ones",
+          "Use forge_get_manifest to understand component interfaces before composing",
+          "Components can be 'controlled' (emit events, parent updates props) or 'uncontrolled' (manage own state)",
+          "For standalone components, handle actions internally; for composable components, emit events",
+          "Use presets for common image sizes: icon (512x512 transparent), hero (1920x1080), sprite (64x64 pixel-art)",
+          "Asset generation is cached - same prompt+options returns cached URL instantly",
+          "Use this.update() after modifying internal state to re-render",
+          "Storage writes are debounced 300ms - safe to call on every keystroke",
+        ],
+
+        componentStructure: `
+import { ForgeComponent, Component } from 'forge';
+
+@Component({
+  tag: 'my-component',
+  props: {
+    title: { type: String, default: 'Hello' },
+    count: { type: Number, default: 0 },
+  },
+  cssVariables: ['--accent-color', '--border-radius'],
+  parts: ['container', 'button']
+})
+class MyComponent extends ForgeComponent {
+  private localState = 0;
+
+  async onMount() {
+    const saved = await this.instance.get('state');
+    if (saved) this.localState = saved;
+  }
+
+  private handleClick = () => {
+    this.localState++;
+    this.instance.set('state', this.localState);
+    this.emit('incremented', { value: this.localState });
+    this.update();
+  };
+
+  render() {
+    return (
+      <div part="container">
+        <h1>{this.props.title}</h1>
+        <button part="button" onClick={this.handleClick}>
+          Count: {this.localState}
+        </button>
+      </div>
+    );
+  }
+}
+`.trim(),
+      };
     }
 
     default:
@@ -1195,6 +1329,10 @@ Connect Claude Chat to GoodFaith!
 - forge_create_image - Generate images with Gemini (supports transparency, presets)
 - forge_create_speech - Generate speech with OpenAI TTS (13 voices, custom instructions)
 - forge_search_assets - Search existing assets semantically
+
+## Documentation
+
+- forge_about - Get comprehensive Forge documentation (runtime, tools, best practices)
 `,
         {
           headers: {
