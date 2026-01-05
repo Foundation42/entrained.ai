@@ -1388,6 +1388,7 @@ export class ForgeComponent extends HTMLElement {
 
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
+  let deferredValue = undefined;  // For select elements, set value after children
   if (attrs) {
     for (const [key, value] of Object.entries(attrs)) {
       if (key === 'style' && typeof value === 'object') Object.assign(el.style, value);
@@ -1400,8 +1401,12 @@ export function h(tag, attrs, ...children) {
       }
       else if (key === 'className') el.className = String(value);
       // Handle form element properties that need to be set as properties, not attributes
-      else if (key === 'value' && (tag === 'input' || tag === 'textarea' || tag === 'select')) {
+      else if (key === 'value' && (tag === 'input' || tag === 'textarea')) {
         el.value = String(value ?? '');
+      }
+      else if (key === 'value' && tag === 'select') {
+        // Defer setting select value until after options are appended
+        deferredValue = String(value ?? '');
       }
       else if (key === 'checked' && tag === 'input') el.checked = Boolean(value);
       else if (key === 'selected' && tag === 'option') el.selected = Boolean(value);
@@ -1413,6 +1418,10 @@ export function h(tag, attrs, ...children) {
     if (child == null || child === false) continue;
     if (typeof child === 'string' || typeof child === 'number') el.appendChild(document.createTextNode(String(child)));
     else if (child instanceof Node) el.appendChild(child);
+  }
+  // Set select value after options are appended
+  if (deferredValue !== undefined) {
+    el.value = deferredValue;
   }
   return el;
 }
