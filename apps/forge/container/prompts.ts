@@ -173,6 +173,26 @@ const audioUrl = await this.createSpeech("Hello and welcome!", {
 });
 \`\`\`
 
+### AI Chat
+\`\`\`tsx
+// Simple prompt (returns string response)
+const response = await this.ai("What's a fun fact about cats?");
+
+// With system prompt for personality
+const response = await this.ai("Hello!", {
+  system: "You are a playful robot pet named Sparky. Keep responses under 50 words.",
+  maxTokens: 100  // optional, default 256, max 1024
+});
+
+// Full messages array for multi-turn conversations
+const response = await this.ai([
+  { role: "system", content: "You are a helpful assistant." },
+  { role: "user", content: "Hello!" },
+  { role: "assistant", content: "Hi there! How can I help?" },
+  { role: "user", content: "Tell me a joke." }
+]);
+\`\`\`
+
 ## Common Patterns
 
 ### Form Inputs

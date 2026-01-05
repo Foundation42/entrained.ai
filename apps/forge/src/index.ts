@@ -859,6 +859,40 @@ app.post('/api/forge/assets/speech', async (c) => {
   }
 });
 
+// AI Chat/Completion for components
+app.post('/api/forge/ai/chat', async (c) => {
+  const body = await c.req.json<{
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    model?: string;
+    max_tokens?: number;
+  }>();
+
+  if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
+    return c.json({ error: 'Missing or invalid messages array' }, 400);
+  }
+
+  // Default to a fast, capable model
+  const model = body.model || '@cf/meta/llama-3.1-8b-instruct';
+  const maxTokens = Math.min(body.max_tokens || 256, 1024); // Cap at 1024 for component use
+
+  try {
+    const result = await c.env.AI.run(model, {
+      messages: body.messages,
+      max_tokens: maxTokens,
+    });
+
+    return c.json({
+      response: result.response,
+      model,
+    });
+  } catch (error) {
+    console.error('[AI] Chat failed:', error);
+    return c.json({
+      error: `AI chat failed: ${(error as Error).message}`,
+    }, 500);
+  }
+});
+
 // Search assets
 app.get('/api/forge/assets/search', async (c) => {
   const query = c.req.query('q');
@@ -1146,6 +1180,12 @@ class StorageAPI {
   }
 }
 
+// Current component being rendered (for event delegation)
+let _currentComponent = null;
+
+// Events to delegate (covers most common use cases)
+const _delegatedEvents = ['click', 'dblclick', 'input', 'change', 'submit', 'keydown', 'keyup', 'keypress', 'focus', 'blur', 'mousedown', 'mouseup', 'mouseover', 'mouseout', 'touchstart', 'touchend'];
+
 // DOM morphing - updates existing DOM to match new structure while preserving focus
 function morph(fromNode, toNode) {
   // Different node types - replace entirely (use actual node, not clone, to preserve handlers)
@@ -1195,21 +1235,8 @@ function morph(fromNode, toNode) {
       if ('selected' in toNode && fromNode.selected !== toNode.selected) fromNode.selected = toNode.selected;
     }
 
-    // Transfer event handlers from new node to existing node
-    if (toNode._forgeHandlers) {
-      // Remove old handlers first
-      if (fromNode._forgeHandlers) {
-        for (const [event, handler] of Object.entries(fromNode._forgeHandlers)) {
-          fromNode.removeEventListener(event, handler);
-        }
-      }
-      // Add new handlers
-      fromNode._forgeHandlers = {};
-      for (const [event, handler] of Object.entries(toNode._forgeHandlers)) {
-        fromNode.addEventListener(event, handler);
-        fromNode._forgeHandlers[event] = handler;
-      }
-    }
+    // Event handlers are now delegated at shadow root level via data-forge-* attributes
+    // No need to transfer handlers during morph - they're looked up dynamically
 
     // Morph children
     const fromChildren = Array.from(fromNode.childNodes);
@@ -1283,6 +1310,10 @@ export class ForgeComponent extends HTMLElement {
     this._componentId = this.getAttribute('data-forge-id') || this.tagName.toLowerCase();
     this._props = {};
 
+    // Event delegation: handlers registered per-render, looked up by ID at event time
+    this._handlers = new Map();
+    this._handlerCounter = 0;
+
     this.instance = new StorageAPI(this._baseUrl, this._componentId, 'instance', this._instanceId);
     this.class = new StorageAPI(this._baseUrl, this._componentId, 'class');
     this.global = new StorageAPI(this._baseUrl, this._componentId, 'global');
@@ -1325,8 +1356,33 @@ export class ForgeComponent extends HTMLElement {
 
   connectedCallback() {
     this.initProps();
+    this._setupEventDelegation();
     this.update();
     requestAnimationFrame(() => Promise.resolve(this.onMount()));
+  }
+
+  _setupEventDelegation() {
+    // Set up delegated event listeners on shadow root
+    // Handlers are looked up dynamically by ID, so closures are always fresh
+    const component = this;
+    _delegatedEvents.forEach(eventType => {
+      const useCapture = eventType === 'focus' || eventType === 'blur';
+      this.shadowRoot.addEventListener(eventType, (e) => {
+        // Walk up from target to find element with handler for this event
+        let target = e.target;
+        while (target && target !== component.shadowRoot) {
+          const handlerId = target.getAttribute?.('data-forge-' + eventType);
+          if (handlerId) {
+            const handler = component._handlers.get(parseInt(handlerId));
+            if (handler) {
+              handler.call(component, e);
+            }
+            break;
+          }
+          target = target.parentNode;
+        }
+      }, useCapture);
+    });
   }
 
   disconnectedCallback() { this.onUnmount(); }
@@ -1336,7 +1392,13 @@ export class ForgeComponent extends HTMLElement {
 
   update() {
     if (!this.shadowRoot) return;
+    // Reset handler registry for fresh closures
+    this._handlers.clear();
+    this._handlerCounter = 0;
+    // Set current component so h() can register handlers
+    _currentComponent = this;
     const rendered = this.render();
+    _currentComponent = null;
     if (typeof rendered === 'string') {
       this.shadowRoot.innerHTML = rendered;
     } else if (rendered instanceof Node) {
@@ -1384,6 +1446,39 @@ export class ForgeComponent extends HTMLElement {
     const result = await response.json();
     return result.url;
   }
+
+  // AI chat/completion - add intelligence to components
+  async ai(input, options = {}) {
+    // Build messages array from input
+    let messages;
+    if (typeof input === 'string') {
+      // Simple string prompt
+      messages = options.system
+        ? [{ role: 'system', content: options.system }, { role: 'user', content: input }]
+        : [{ role: 'user', content: input }];
+    } else if (Array.isArray(input)) {
+      // Full messages array
+      messages = input;
+    } else {
+      throw new Error('ai() expects a string prompt or messages array');
+    }
+
+    const response = await fetch(this._baseUrl + '/api/forge/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages,
+        model: options.model,
+        max_tokens: options.maxTokens || options.max_tokens,
+      }),
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'AI chat failed');
+    }
+    const result = await response.json();
+    return result.response;
+  }
 }
 
 export function h(tag, attrs, ...children) {
@@ -1393,11 +1488,14 @@ export function h(tag, attrs, ...children) {
     for (const [key, value] of Object.entries(attrs)) {
       if (key === 'style' && typeof value === 'object') Object.assign(el.style, value);
       else if (key.startsWith('on') && typeof value === 'function') {
-        const eventName = key.slice(2).toLowerCase();
-        el.addEventListener(eventName, value);
-        // Store handlers for morph to transfer
-        if (!el._forgeHandlers) el._forgeHandlers = {};
-        el._forgeHandlers[eventName] = value;
+        // Event delegation: register handler and store ID as data attribute
+        // Handler is looked up dynamically at event time, so closures are always fresh
+        if (_currentComponent) {
+          const eventName = key.slice(2).toLowerCase();
+          const handlerId = ++_currentComponent._handlerCounter;
+          _currentComponent._handlers.set(handlerId, value);
+          el.setAttribute('data-forge-' + eventName, handlerId);
+        }
       }
       else if (key === 'className') el.className = String(value);
       // Handle form element properties that need to be set as properties, not attributes
