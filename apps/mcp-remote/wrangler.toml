@@ -1,6 +1,7 @@
 name = "mcp-remote"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
 
 routes = [
   { pattern = "mcp.entrained.ai", custom_domain = true }
@@ -9,3 +10,14 @@ routes = [
 [vars]
 GOODFAITH_API = "https://goodfaith.entrained.ai/api"
 AUTH_API = "https://auth.entrained.ai/api"
+FORGE_API = "https://forge.entrained.ai"
+
+# Durable Object for long-lived SSE sessions
+[[durable_objects.bindings]]
+name = "MCP_SESSIONS"
+class_name = "McpSession"
+
+# Migration for Durable Objects
+[[migrations]]
+tag = "v1"
+new_classes = ["McpSession"]

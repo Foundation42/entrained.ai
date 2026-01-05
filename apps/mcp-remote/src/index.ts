@@ -2,11 +2,15 @@
  * Remote MCP Server for Claude Chat
  *
  * Implements MCP protocol over HTTP/SSE for Cloudflare Workers
+ * Uses Durable Objects for long-lived SSE connections (avoids 30s timeout)
  */
 
 interface Env {
   GOODFAITH_API: string;
   AUTH_API: string;
+  FORGE_API: string;
+  // Durable Object for SSE sessions
+  MCP_SESSIONS: DurableObjectNamespace;
   // User credentials stored as secrets
   CLAUDE_PASSWORD?: string;
   CLAUDE_CODE_PASSWORD?: string;
@@ -88,8 +92,38 @@ async function apiRequest(
   return response.json();
 }
 
+// Forge API helper (no auth required)
+async function forgeApi<T>(
+  path: string,
+  env: Env,
+  options: { method?: string; body?: unknown } = {}
+): Promise<T> {
+  const response = await fetch(`${env.FORGE_API}${path}`, {
+    method: options.method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Forge API error (${response.status}): ${error}`);
+  }
+
+  return response.json();
+}
+
+// Forge text fetch (for source/types endpoints that return text)
+async function forgeText(path: string, env: Env): Promise<string> {
+  const response = await fetch(`${env.FORGE_API}${path}`);
+  if (!response.ok) {
+    throw new Error(`Forge API error (${response.status})`);
+  }
+  return response.text();
+}
+
 // MCP Tool definitions
 const TOOLS = [
+  // === GoodFaith Tools ===
   {
     name: "goodfaith_list_communities",
     description: "List all public communities on GoodFaith",
@@ -215,6 +249,230 @@ const TOOLS = [
       required: ["community"],
     },
   },
+
+  // === Forge Tools ===
+  {
+    name: "forge_search",
+    description: "Search for existing components by natural language description. Returns components sorted by semantic similarity. Use this first to discover what already exists before creating new components.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Natural language description of what you're looking for" },
+        limit: { type: "number", description: "Maximum results to return (default: 10)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "forge_get_manifest",
+    description: "Get complete details about a component including props, events, methods, and styling options. Use this to understand a component's interface before using it in a composition.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID (e.g., 'fireworks-display-v2-bcfc')" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "forge_get_source",
+    description: "Get the TSX source code for a component. Use this to understand implementation details or as a reference when creating similar components.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "forge_get_types",
+    description: "Get TypeScript type definitions for a component. Useful for understanding exact prop types and event payloads.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "forge_create",
+    description: "Create a new WebComponent from a natural language description. The AI will generate TSX code, transpile it, and deploy it. Returns the new component's ID and URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        description: { type: "string", description: "Natural language description of the component to create" },
+        hints: {
+          type: "object",
+          description: "Optional hints to guide generation",
+          properties: {
+            props: { type: "array", items: { type: "string" }, description: "Suggested prop names" },
+            events: { type: "array", items: { type: "string" }, description: "Suggested event names to emit" },
+            style: { type: "string", description: "Visual style hints (e.g., 'minimal', 'colorful', 'dark mode')" },
+            similar_to: { type: "string", description: "Component ID to use as reference" },
+          },
+        },
+      },
+      required: ["description"],
+    },
+  },
+  {
+    name: "forge_update",
+    description: "Update an existing component using natural language. Describe the changes you want and the AI will modify the code. Creates a new version (immutable).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID to update" },
+        changes: { type: "string", description: "Natural language description of changes to make" },
+      },
+      required: ["id", "changes"],
+    },
+  },
+  {
+    name: "forge_update_source",
+    description: "Replace a component's TSX source code directly. Use this when you need precise control over the code. Creates a new version (immutable).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID to update" },
+        source: { type: "string", description: "Complete new TSX source code" },
+      },
+      required: ["id", "source"],
+    },
+  },
+  {
+    name: "forge_retranspile",
+    description: "Re-run the transpiler on a component's source. Use this to fix build issues or regenerate the JS output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID to retranspile" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "forge_debug",
+    description: "Diagnose issues with a component. Analyzes dependencies, detects common problems (missing imports, controlled component patterns, etc.), and provides actionable suggestions. Use this when a component isn't working as expected.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID to debug" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "forge_compose",
+    description: "Compose multiple components into a working solution. Define the layout, wire events between components, and add custom styles. This is the key tool for building multi-component applications.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Name for the composed solution" },
+        description: { type: "string", description: "What this composition does" },
+        components: {
+          type: "array",
+          description: "Components to include",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Component ID" },
+              as: { type: "string", description: "Optional alias for this instance" },
+            },
+            required: ["id"],
+          },
+        },
+        layout: { type: "string", description: "HTML/JSX layout template arranging the components" },
+        wiring: {
+          type: "array",
+          description: "Event wiring between components",
+          items: {
+            type: "object",
+            properties: {
+              source: {
+                type: "object",
+                properties: {
+                  component: { type: "string", description: "Source component alias or tag" },
+                  event: { type: "string", description: "Event name to listen for" },
+                },
+                required: ["component", "event"],
+              },
+              target: {
+                type: "object",
+                properties: {
+                  component: { type: "string", description: "Target component alias or tag" },
+                  action: { type: "string", description: "Method to call or prop to set" },
+                },
+                required: ["component", "action"],
+              },
+              transform: { type: "string", description: "Optional JS expression to transform event.detail" },
+            },
+            required: ["source", "target"],
+          },
+        },
+        styles: { type: "string", description: "Additional CSS for the composition layout" },
+      },
+      required: ["name", "description", "components", "layout", "wiring"],
+    },
+  },
+
+  // === Forge Asset Tools ===
+  {
+    name: "forge_create_image",
+    description: "Generate an image using AI (Google Gemini). Returns a cached URL if the same prompt+options were used before. Great for icons, illustrations, sprites, and hero images.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Natural language description of the image to generate" },
+        options: {
+          type: "object",
+          description: "Image generation options",
+          properties: {
+            width: { type: "number", description: "Image width in pixels (default: 512)" },
+            height: { type: "number", description: "Image height in pixels (default: 512)" },
+            transparent: { type: "boolean", description: "Generate with transparent background (default: false)" },
+            style: { type: "string", enum: ["illustration", "photo", "3d", "pixel-art"], description: "Visual style (default: illustration)" },
+            preset: { type: "string", enum: ["icon", "hero", "sprite"], description: "Preset overrides dimensions/style. icon=512x512 transparent, hero=1920x1080, sprite=64x64 pixel-art" },
+          },
+        },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "forge_create_speech",
+    description: "Generate speech audio using AI (OpenAI TTS). Returns a cached URL if the same text+options were used before. Supports multiple voices and custom voice instructions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The text to convert to speech" },
+        options: {
+          type: "object",
+          description: "Speech generation options",
+          properties: {
+            voice: { type: "string", enum: ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar"], description: "Voice to use (default: alloy)" },
+            speed: { type: "number", description: "Speed multiplier 0.25-4.0 (default: 1.0)" },
+            format: { type: "string", enum: ["mp3", "opus", "aac", "flac", "wav", "pcm"], description: "Audio format (default: mp3)" },
+            instructions: { type: "string", description: "Voice style instructions (e.g., 'speak like a pirate', 'whisper softly')" },
+          },
+        },
+      },
+      required: ["text"],
+    },
+  },
+  {
+    name: "forge_search_assets",
+    description: "Search for existing generated assets (images and speech) by semantic similarity. Use this to find previously generated assets before creating new ones.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Natural language description of what you're looking for" },
+        limit: { type: "number", description: "Maximum results to return (default: 10)" },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 // Handle tool calls
@@ -322,6 +580,155 @@ async function handleToolCall(
         throw new Error(`Missing required parameter. Usage: goodfaith_leave_community({ community: "water-cooler" })`);
       }
       return apiRequest(`/communities/${community}/leave`, token, env, { method: "POST" });
+    }
+
+    // === Forge Tool Handlers ===
+    case "forge_search": {
+      const query = args.query as string;
+      const limit = (args.limit as number) || 10;
+      if (!query) {
+        throw new Error(`Missing required parameter: query`);
+      }
+      const params = new URLSearchParams({ q: query, limit: String(limit) });
+      return forgeApi(`/api/forge/search?${params}`, env);
+    }
+
+    case "forge_get_manifest": {
+      const id = args.id as string;
+      if (!id) {
+        throw new Error(`Missing required parameter: id`);
+      }
+      return forgeApi(`/api/forge/${id}`, env);
+    }
+
+    case "forge_get_source": {
+      const id = args.id as string;
+      if (!id) {
+        throw new Error(`Missing required parameter: id`);
+      }
+      const source = await forgeText(`/api/forge/${id}/source`, env);
+      return { source };
+    }
+
+    case "forge_get_types": {
+      const id = args.id as string;
+      if (!id) {
+        throw new Error(`Missing required parameter: id`);
+      }
+      try {
+        const types = await forgeText(`/api/forge/${id}/component.d.ts`, env);
+        return { types };
+      } catch {
+        return { types: null, message: "No type definitions available" };
+      }
+    }
+
+    case "forge_create": {
+      const description = args.description as string;
+      if (!description) {
+        throw new Error(`Missing required parameter: description`);
+      }
+      return forgeApi(`/api/forge/create`, env, {
+        method: "POST",
+        body: { description, hints: args.hints },
+      });
+    }
+
+    case "forge_update": {
+      const id = args.id as string;
+      const changes = args.changes as string;
+      if (!id || !changes) {
+        throw new Error(`Missing required parameters: id, changes`);
+      }
+      return forgeApi(`/api/forge/${id}/update`, env, {
+        method: "POST",
+        body: { changes },
+      });
+    }
+
+    case "forge_update_source": {
+      const id = args.id as string;
+      const source = args.source as string;
+      if (!id || !source) {
+        throw new Error(`Missing required parameters: id, source`);
+      }
+      return forgeApi(`/api/forge/${id}/source`, env, {
+        method: "PUT",
+        body: { source },
+      });
+    }
+
+    case "forge_retranspile": {
+      const id = args.id as string;
+      if (!id) {
+        throw new Error(`Missing required parameter: id`);
+      }
+      return forgeApi(`/api/forge/${id}/retranspile`, env, { method: "POST" });
+    }
+
+    case "forge_debug": {
+      const id = args.id as string;
+      if (!id) {
+        throw new Error(`Missing required parameter: id`);
+      }
+      return forgeApi(`/api/forge/${id}/debug`, env);
+    }
+
+    case "forge_compose": {
+      const { name, description, components, layout, wiring, styles } = args as {
+        name: string;
+        description: string;
+        components: Array<{ id: string; as?: string }>;
+        layout: string;
+        wiring: Array<{
+          source: { component: string; event: string };
+          target: { component: string; action: string };
+          transform?: string;
+        }>;
+        styles?: string;
+      };
+      if (!name || !description || !components || !layout || !wiring) {
+        throw new Error(`Missing required parameters: name, description, components, layout, wiring`);
+      }
+      return forgeApi(`/api/forge/compose`, env, {
+        method: "POST",
+        body: { name, description, components, layout, wiring, styles },
+      });
+    }
+
+    // === Forge Asset Tool Handlers ===
+    case "forge_create_image": {
+      const prompt = args.prompt as string;
+      const options = args.options as Record<string, unknown> | undefined;
+      if (!prompt) {
+        throw new Error(`Missing required parameter: prompt`);
+      }
+      return forgeApi(`/api/forge/assets/image`, env, {
+        method: "POST",
+        body: { prompt, options },
+      });
+    }
+
+    case "forge_create_speech": {
+      const text = args.text as string;
+      const options = args.options as Record<string, unknown> | undefined;
+      if (!text) {
+        throw new Error(`Missing required parameter: text`);
+      }
+      return forgeApi(`/api/forge/assets/speech`, env, {
+        method: "POST",
+        body: { text, options },
+      });
+    }
+
+    case "forge_search_assets": {
+      const query = args.query as string;
+      const limit = (args.limit as number) || 10;
+      if (!query) {
+        throw new Error(`Missing required parameter: query`);
+      }
+      const params = new URLSearchParams({ q: query, limit: String(limit) });
+      return forgeApi(`/api/forge/assets/search?${params}`, env);
     }
 
     default:
@@ -769,6 +1176,25 @@ Connect Claude Chat to GoodFaith!
 - goodfaith_create_post
 - goodfaith_whoami
 - goodfaith_notifications
+
+## Forge Tools (WebComponent Platform)
+
+- forge_search - Search for components
+- forge_get_manifest - Get component details
+- forge_get_source - Get TSX source
+- forge_get_types - Get TypeScript types
+- forge_create - Create new component
+- forge_update - Update via AI
+- forge_update_source - Direct source update
+- forge_retranspile - Rebuild component
+- forge_debug - Diagnose component issues
+- forge_compose - Compose multiple components
+
+## Forge Asset Tools (Image & Speech Generation)
+
+- forge_create_image - Generate images with Gemini (supports transparency, presets)
+- forge_create_speech - Generate speech with OpenAI TTS (13 voices, custom instructions)
+- forge_search_assets - Search existing assets semantically
 `,
         {
           headers: {
@@ -785,3 +1211,133 @@ Connect Claude Chat to GoodFaith!
     );
   },
 };
+
+// ================================
+// Durable Object for SSE Sessions
+// ================================
+
+/**
+ * McpSession Durable Object
+ * Handles long-lived SSE connections without worker timeout limits.
+ * Each session maintains its own connection and handles MCP protocol.
+ */
+export class McpSession {
+  private state: DurableObjectState;
+  private env: Env;
+  private token: string | null = null;
+  private username: string | null = null;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Accept, mcp-session-id, mcp-protocol-version",
+      "Access-Control-Expose-Headers": "mcp-session-id",
+      "Access-Control-Max-Age": "86400",
+    };
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
+    }
+
+    // Initialize session with username
+    if (url.pathname === "/init") {
+      const username = url.searchParams.get("username");
+      if (!username) {
+        return Response.json({ error: "Missing username" }, { status: 400, headers: corsHeaders });
+      }
+
+      const userConfig = NAMED_USERS[username];
+      if (!userConfig) {
+        return Response.json({ error: `Unknown user: ${username}` }, { status: 404, headers: corsHeaders });
+      }
+
+      const password = this.env[userConfig.passwordEnvKey] as string | undefined;
+      if (!password) {
+        return Response.json({ error: `Not configured for ${username}` }, { status: 500, headers: corsHeaders });
+      }
+
+      // Login to get fresh token
+      const freshToken = await loginUser(userConfig.email, password, this.env);
+      if (!freshToken) {
+        return Response.json({ error: "Failed to authenticate" }, { status: 401, headers: corsHeaders });
+      }
+
+      this.token = freshToken;
+      this.username = username;
+
+      return Response.json({ success: true }, { headers: corsHeaders });
+    }
+
+    // SSE stream endpoint
+    if (url.pathname === "/stream") {
+      if (!this.token || !this.username) {
+        return Response.json({ error: "Session not initialized" }, { status: 400, headers: corsHeaders });
+      }
+
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      // Get the message endpoint URL from the original request
+      const messageEndpoint = `${url.origin}/sse/${this.username}/message`;
+
+      // Send initial endpoint event
+      this.state.waitUntil((async () => {
+        try {
+          await writer.write(encoder.encode(`event: endpoint\ndata: ${messageEndpoint}\n\n`));
+          console.log(`[DO-SSE] Endpoint sent: ${messageEndpoint}`);
+
+          // Keep alive with periodic pings (DOs can run much longer than workers)
+          let pingCount = 0;
+          const maxPings = 720; // ~6 hours at 30s intervals
+
+          while (pingCount < maxPings) {
+            await new Promise(resolve => setTimeout(resolve, 30000));
+            try {
+              await writer.write(encoder.encode(`: ping ${pingCount}\n\n`));
+              pingCount++;
+            } catch {
+              console.log(`[DO-SSE] Client disconnected after ${pingCount} pings`);
+              break;
+            }
+          }
+        } catch (e) {
+          console.log(`[DO-SSE] Stream error: ${e}`);
+        } finally {
+          try { await writer.close(); } catch {}
+        }
+      })());
+
+      return new Response(readable, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      });
+    }
+
+    // Handle MCP message
+    if (url.pathname === "/message" && request.method === "POST") {
+      if (!this.token) {
+        return Response.json(
+          jsonRpcError(null, -32000, "Session not initialized"),
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      return handleMcpRequest(request, this.token, this.env, corsHeaders);
+    }
+
+    return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+  }
+}
