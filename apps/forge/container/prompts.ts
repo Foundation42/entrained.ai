@@ -153,6 +153,90 @@ this.queryAll(selector)       // Query all in shadow DOM
 this.update()                 // Trigger re-render
 \`\`\`
 
+### Asset Generation
+\`\`\`tsx
+// Generate AI images (returns URL, cached by prompt+options)
+const imageUrl = await this.createImage("a cute robot icon", {
+  width: 512,
+  height: 512,
+  transparent: true,
+  style: "illustration"  // illustration | photo | 3d | pixel-art
+});
+
+// Presets: icon (512x512 transparent), hero (1920x1080), sprite (64x64 pixel-art)
+const iconUrl = await this.createImage("party hat", { preset: "icon" });
+
+// Generate AI speech (returns URL, cached by text+options)
+const audioUrl = await this.createSpeech("Hello and welcome!", {
+  voice: "nova",     // alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse, marin, cedar
+  speed: 1.0         // 0.25 to 4.0
+});
+\`\`\`
+
+## Common Patterns
+
+### Form Inputs
+Use \`onInput\` (not onChange) and bind values properly:
+\`\`\`tsx
+private form = { name: '', email: '' };
+
+private onNameInput = (e: Event) => {
+  this.form.name = (e.target as HTMLInputElement).value;
+  this.update();
+  this.instance.set('draft', this.form);  // Auto-debounced
+};
+
+render() {
+  return (
+    <input
+      type="text"
+      value={this.form.name}
+      onInput={this.onNameInput}
+    />
+  );
+}
+\`\`\`
+
+### Audio Playback
+Always catch AbortError when calling play() before update():
+\`\`\`tsx
+private audioPlayer: HTMLAudioElement | null = null;
+
+private toggleAudio(url: string) {
+  if (!this.audioPlayer) {
+    this.audioPlayer = new Audio(url);
+  }
+  this.audioPlayer.play().catch(e => {
+    if (e.name !== 'AbortError') console.error('Playback error:', e);
+  });
+  this.update();
+}
+\`\`\`
+
+### Event Handlers with State Data
+Always null-check state before accessing properties:
+\`\`\`tsx
+private handleShare(item: ItemData) {
+  if (!item) return;  // Guard against undefined
+  this.emit('share', { itemId: item.id, url: item.url });
+}
+
+// In render, also guard the onClick:
+<button onClick={() => currentItem && this.handleShare(currentItem)}>
+  Share
+</button>
+\`\`\`
+
+### Controlled Components
+When a component emits events for parents to handle, document that behavior:
+\`\`\`tsx
+// This button emits 'share' event - parent handles actual sharing
+// The component itself won't do anything visible
+<button onClick={() => this.emit('share', { id: this.item.id })}>
+  Share
+</button>
+\`\`\`
+
 ## Best Practices
 
 1. **Keep it simple**: Build the minimal working version
