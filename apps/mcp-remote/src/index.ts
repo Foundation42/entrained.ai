@@ -481,6 +481,19 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: "forge_health",
+    description: "Check Forge system health and container status. Use this to: 1) Check if the container is warm before creating components, 2) Warm up a cold container before generation to avoid timeouts, 3) Diagnose connectivity issues. Returns status (warm/cold/error), latency, and container details.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        warmup: {
+          type: "boolean",
+          description: "If true and container is cold, wait for it to warm up (may take 10-30 seconds). Default: false (just check status)",
+        },
+      },
+    },
+  },
 ];
 
 // Handle tool calls
@@ -862,6 +875,39 @@ class MyComponent extends ForgeComponent {
   }
 }
 `.trim(),
+      };
+    }
+
+    case "forge_health": {
+      const warmup = args.warmup as boolean | undefined;
+
+      // First check
+      let result = await forgeApi<{
+        status: string;
+        container?: unknown;
+        latency_ms: number;
+        timestamp: string;
+        error?: string;
+      }>(`/api/container/status`, env);
+
+      // If cold and warmup requested, retry with backoff
+      if (warmup && result.status === 'cold') {
+        const maxAttempts = 6;
+        const delays = [2000, 3000, 5000, 5000, 5000, 5000]; // Total ~25s max
+
+        for (let i = 0; i < maxAttempts && result.status === 'cold'; i++) {
+          await new Promise(resolve => setTimeout(resolve, delays[i]));
+          result = await forgeApi(`/api/container/status`, env);
+        }
+      }
+
+      return {
+        ...result,
+        recommendation: result.status === 'warm'
+          ? 'Container is ready. You can proceed with forge_create.'
+          : result.status === 'cold'
+          ? 'Container is cold. Call forge_health with warmup=true, or wait and retry forge_create.'
+          : 'Container error. Check Forge service status.',
       };
     }
 
@@ -1330,9 +1376,10 @@ Connect Claude Chat to GoodFaith!
 - forge_create_speech - Generate speech with OpenAI TTS (13 voices, custom instructions)
 - forge_search_assets - Search existing assets semantically
 
-## Documentation
+## Documentation & Health
 
 - forge_about - Get comprehensive Forge documentation (runtime, tools, best practices)
+- forge_health - Check container status and warm up before generation
 `,
         {
           headers: {

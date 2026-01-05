@@ -11,8 +11,8 @@ export class ForgeGenerator extends Container {
   // Port the Bun server listens on
   defaultPort = 8080;
 
-  // Sleep after 5 minutes of inactivity (reduces cold starts)
-  sleepAfter = '300s';
+  // Sleep after 10 minutes of inactivity (allows more time between cron pings)
+  sleepAfter = '600s';
 
   // Timeout configuration for container spin-up
   containerTimeouts = {

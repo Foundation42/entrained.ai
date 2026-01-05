@@ -81,7 +81,7 @@ new_sqlite_classes = ["ForgeGenerator", "ForgeJob"]
 
 # Cron trigger to keep container warm (prevents cold starts)
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/3 * * * *"]
 
 [vars]
 GEMINI_MODEL = "gemini-3-flash-preview"
