@@ -107,10 +107,17 @@ export class AssetRegistry {
 
     // Store metadata in KV (both by ID and by hash for lookup)
     const metadataJson = JSON.stringify(metadata);
-    await Promise.all([
-      this.registry.put(`asset:${id}`, metadataJson),
-      this.registry.put(`asset:hash:${hash}`, metadataJson),
-    ]);
+    try {
+      console.log(`[AssetRegistry] Writing to KV: asset:${id}`);
+      await Promise.all([
+        this.registry.put(`asset:${id}`, metadataJson),
+        this.registry.put(`asset:hash:${hash}`, metadataJson),
+      ]);
+      console.log(`[AssetRegistry] KV write successful for ${id}`);
+    } catch (kvError) {
+      console.error(`[AssetRegistry] KV write FAILED for ${id}:`, kvError);
+      throw kvError;
+    }
 
     // Index in Vectorize for semantic search
     await this.indexAsset(metadata);
@@ -264,16 +271,26 @@ export class AssetRegistry {
       return [];
     }
 
-    // Query Vectorize, filtering for assets only
+    console.log(`[AssetRegistry] Searching for: "${query}" with ${queryVec.length}-dim vector`);
+
+    // Query Vectorize - fetch more than needed since we filter in code
+    // (Vectorize metadata filtering doesn't work reliably)
+    // Max topK is 50 with returnMetadata: 'all'
     const vectorResults = await this.vectorize.query(queryVec, {
-      topK: limit,
+      topK: Math.min(limit * 3, 50),
       returnMetadata: 'all',
-      filter: { type: { $eq: 'asset' } },
     });
 
-    // Fetch full metadata for each result
+    // Filter for assets only (by ID prefix or metadata type)
+    const assetMatches = vectorResults.matches.filter(m =>
+      m.id.startsWith('asset:') || (m.metadata as Record<string, unknown>)?.type === 'asset'
+    );
+
+    console.log(`[AssetRegistry] Vectorize returned ${vectorResults.matches.length} total, ${assetMatches.length} assets`);
+
+    // Fetch full metadata for each result (up to limit)
     const results: AssetMetadata[] = [];
-    for (const match of vectorResults.matches) {
+    for (const match of assetMatches.slice(0, limit)) {
       // Extract asset ID from the namespaced ID (asset:xxx -> xxx)
       const assetId = match.id.replace('asset:', '');
       const metadata = await this.get(assetId);
@@ -282,6 +299,7 @@ export class AssetRegistry {
       }
     }
 
+    console.log(`[AssetRegistry] Returning ${results.length} assets`);
     return results;
   }
 

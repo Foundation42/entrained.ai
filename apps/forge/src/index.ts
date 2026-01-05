@@ -1148,9 +1148,9 @@ class StorageAPI {
 
 // DOM morphing - updates existing DOM to match new structure while preserving focus
 function morph(fromNode, toNode) {
-  // Different node types - replace entirely
+  // Different node types - replace entirely (use actual node, not clone, to preserve handlers)
   if (fromNode.nodeType !== toNode.nodeType || fromNode.nodeName !== toNode.nodeName) {
-    fromNode.parentNode?.replaceChild(toNode.cloneNode(true), fromNode);
+    fromNode.parentNode?.replaceChild(toNode, fromNode);
     return;
   }
 
@@ -1195,6 +1195,22 @@ function morph(fromNode, toNode) {
       if ('selected' in toNode && fromNode.selected !== toNode.selected) fromNode.selected = toNode.selected;
     }
 
+    // Transfer event handlers from new node to existing node
+    if (toNode._forgeHandlers) {
+      // Remove old handlers first
+      if (fromNode._forgeHandlers) {
+        for (const [event, handler] of Object.entries(fromNode._forgeHandlers)) {
+          fromNode.removeEventListener(event, handler);
+        }
+      }
+      // Add new handlers
+      fromNode._forgeHandlers = {};
+      for (const [event, handler] of Object.entries(toNode._forgeHandlers)) {
+        fromNode.addEventListener(event, handler);
+        fromNode._forgeHandlers[event] = handler;
+      }
+    }
+
     // Morph children
     const fromChildren = Array.from(fromNode.childNodes);
     const toChildren = Array.from(toNode.childNodes);
@@ -1226,16 +1242,16 @@ function morph(fromNode, toNode) {
       // Match by position
       if (fromIndex < fromChildren.length) {
         const fromChild = fromChildren[fromIndex];
-        // If types match, morph; otherwise replace
+        // If types match, morph; otherwise replace (use actual node to preserve handlers)
         if (fromChild.nodeType === toChild.nodeType && fromChild.nodeName === toChild.nodeName) {
           morph(fromChild, toChild);
         } else {
-          fromNode.replaceChild(toChild.cloneNode(true), fromChild);
+          fromNode.replaceChild(toChild, fromChild);
         }
         fromIndex++;
       } else {
-        // No more from children - append
-        fromNode.appendChild(toChild.cloneNode(true));
+        // No more from children - append (use actual node to preserve handlers)
+        fromNode.appendChild(toChild);
       }
     }
 
@@ -1375,7 +1391,13 @@ export function h(tag, attrs, ...children) {
   if (attrs) {
     for (const [key, value] of Object.entries(attrs)) {
       if (key === 'style' && typeof value === 'object') Object.assign(el.style, value);
-      else if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2).toLowerCase(), value);
+      else if (key.startsWith('on') && typeof value === 'function') {
+        const eventName = key.slice(2).toLowerCase();
+        el.addEventListener(eventName, value);
+        // Store handlers for morph to transfer
+        if (!el._forgeHandlers) el._forgeHandlers = {};
+        el._forgeHandlers[eventName] = value;
+      }
       else if (key === 'className') el.className = String(value);
       // Handle form element properties that need to be set as properties, not attributes
       else if (key === 'value' && (tag === 'input' || tag === 'textarea' || tag === 'select')) {
