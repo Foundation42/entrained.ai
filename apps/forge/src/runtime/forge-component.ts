@@ -276,6 +276,67 @@ export abstract class ForgeComponent<P = Record<string, unknown>> extends HTMLEl
   queryAll<T extends Element = Element>(selector: string): T[] {
     return Array.from(this.shadowRoot?.querySelectorAll<T>(selector) ?? []);
   }
+
+  /**
+   * Generate an image from a text prompt
+   * @param prompt - Description of the image to generate
+   * @param options - Generation options (width, height, transparent, style, preset)
+   * @returns URL to the generated image
+   */
+  async createImage(
+    prompt: string,
+    options: {
+      width?: number;
+      height?: number;
+      transparent?: boolean;
+      style?: 'illustration' | 'photo' | '3d' | 'pixel-art';
+      preset?: 'icon' | 'hero' | 'sprite';
+    } = {}
+  ): Promise<string> {
+    const response = await fetch(`${this._baseUrl}/api/forge/assets/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, options }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json() as { error?: string };
+      throw new Error(error.error || 'Image generation failed');
+    }
+
+    const result = await response.json() as { url: string };
+    return result.url;
+  }
+
+  /**
+   * Generate speech audio from text
+   * @param text - Text to convert to speech
+   * @param options - TTS options (voice, speed, format)
+   * @returns URL to the generated audio file
+   */
+  async createSpeech(
+    text: string,
+    options: {
+      voice?: 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'fable' | 'onyx' | 'nova' | 'sage' | 'shimmer' | 'verse' | 'marin' | 'cedar';
+      speed?: number;
+      format?: 'mp3' | 'opus' | 'aac' | 'flac' | 'wav' | 'pcm';
+      instructions?: string;
+    } = {}
+  ): Promise<string> {
+    const response = await fetch(`${this._baseUrl}/api/forge/assets/speech`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, options }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json() as { error?: string };
+      throw new Error(error.error || 'Speech generation failed');
+    }
+
+    const result = await response.json() as { url: string };
+    return result.url;
+  }
 }
 
 /**

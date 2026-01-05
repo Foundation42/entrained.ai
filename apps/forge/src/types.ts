@@ -5,6 +5,8 @@
 export interface Env {
   // R2 bucket for artifacts (TSX, compiled JS, manifests)
   ARTIFACTS: R2Bucket;
+  // R2 bucket for generated assets (images, speech)
+  ASSETS: R2Bucket;
   // KV for component metadata (registry)
   REGISTRY: KVNamespace;
   // KV for component storage (instance/class/global data)
@@ -21,8 +23,10 @@ export interface Env {
   GENERATE_QUEUE: Queue;
   // Gemini model config
   GEMINI_MODEL: string;
+  GEMINI_IMAGE_MODEL: string;
   // API keys (set via secrets)
   GEMINI_API_KEY?: string;
+  OPENAI_API_KEY?: string;
 }
 
 // ================================
@@ -206,3 +210,70 @@ export interface DBStats {
   instances: number;               // Active instance count
   last_used: string;               // ISO timestamp
 }
+
+// ================================
+// Asset Generation Types
+// ================================
+
+export type ImageStyle = 'illustration' | 'photo' | '3d' | 'pixel-art';
+export type ImagePreset = 'icon' | 'hero' | 'sprite';
+
+export interface ImageOptions {
+  width?: number;                  // Default: 512
+  height?: number;                 // Default: 512
+  transparent?: boolean;           // Default: false
+  style?: ImageStyle;              // Visual style hint
+  preset?: ImagePreset;            // Preset overrides dimensions/style
+}
+
+export type TTSVoice = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'fable' | 'onyx' | 'nova' | 'sage' | 'shimmer' | 'verse' | 'marin' | 'cedar';
+export type TTSFormat = 'mp3' | 'opus' | 'aac' | 'flac' | 'wav' | 'pcm';
+
+export interface SpeechOptions {
+  voice?: TTSVoice;                // Default: 'alloy'
+  speed?: number;                  // 0.25 to 4.0, default: 1.0
+  format?: TTSFormat;              // Default: 'mp3'
+  instructions?: string;           // Voice style instructions (e.g., "talk like a pirate")
+}
+
+export interface AssetMetadata {
+  id: string;                      // Hash-based ID
+  type: 'image' | 'speech';
+  prompt: string;                  // Original prompt/text
+  params: ImageOptions | SpeechOptions;
+  url: string;                     // CDN URL to asset
+  r2_key: string;                  // R2 storage key
+  created_at: string;              // ISO timestamp
+  size_bytes: number;
+  model?: string;                  // AI model used (e.g., "gemini-2.5-flash-image", "gpt-4o-mini-tts")
+  // For images
+  width?: number;
+  height?: number;
+  // For speech
+  duration_ms?: number;
+}
+
+export interface CreateImageRequest {
+  prompt: string;
+  options?: ImageOptions;
+}
+
+export interface CreateSpeechRequest {
+  text: string;
+  options?: SpeechOptions;
+}
+
+export interface AssetResponse {
+  id: string;
+  url: string;
+  type: 'image' | 'speech';
+  cached: boolean;                 // True if returned from cache
+  created_at: string;
+}
+
+// Preset configurations
+export const IMAGE_PRESETS: Record<ImagePreset, Partial<ImageOptions>> = {
+  icon: { width: 512, height: 512, transparent: true, style: 'illustration' },
+  hero: { width: 1920, height: 1080, transparent: false, style: 'photo' },
+  sprite: { width: 64, height: 64, transparent: true, style: 'pixel-art' },
+};

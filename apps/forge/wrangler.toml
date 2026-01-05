@@ -20,6 +20,11 @@ zone_name = "entrained.ai"
 binding = "ARTIFACTS"
 bucket_name = "forge-artifacts"
 
+# R2 bucket for generated assets (images, speech)
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "forge-assets"
+
 # KV namespace for component metadata (like Prometheus registry)
 [[kv_namespaces]]
 binding = "REGISTRY"
@@ -80,6 +85,11 @@ crons = ["*/5 * * * *"]
 
 [vars]
 GEMINI_MODEL = "gemini-3-flash-preview"
+GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+
+# Secrets (set via wrangler secret put):
+# - GEMINI_API_KEY: For component + image generation
+# - OPENAI_API_KEY: For text-to-speech
 
 # Development overrides
 [env.dev]

@@ -100,10 +100,30 @@ export class Registry {
   }
 
   /**
-   * Get component by tag (returns latest version)
+   * Get component by tag (returns latest version ID)
    */
   async getByTag(tag: string): Promise<string | null> {
     return this.kv.get(`tag:${tag}`);
+  }
+
+  /**
+   * Find component by tag (returns full entry)
+   */
+  async findByTag(tag: string): Promise<{
+    id: string;
+    manifest: ForgeManifest;
+    artifacts: {
+      manifest_key: string;
+      source_key: string;
+      component_key: string;
+      tsx_size: number;
+      js_size: number;
+    };
+    embedding?: number[];
+  } | null> {
+    const id = await this.getByTag(tag);
+    if (!id) return null;
+    return this.get(id);
   }
 
   /**

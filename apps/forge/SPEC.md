@@ -615,6 +615,135 @@ The MCP server provides **conversational responses** - not just raw JSON, but ri
 
 ---
 
+## Asset Generation
+
+Forge includes built-in support for AI-generated assets (images and speech), available both at design-time (MCP tools) and runtime (component APIs).
+
+### Image Generation
+
+Generate images from text prompts using Google Gemini:
+
+```typescript
+// Runtime API (in components)
+const imageUrl = await this.createImage("party hat icon");
+const imageUrl = await this.createImage("robot avatar", {
+  width: 512,
+  height: 512,
+  transparent: true,
+  style: "illustration"  // illustration | photo | 3d | pixel-art
+});
+
+// Presets for common use cases
+const iconUrl = await this.createImage("party hat", { preset: "icon" });     // 512x512, transparent
+const heroUrl = await this.createImage("landscape", { preset: "hero" });     // 1920x1080, opaque
+const spriteUrl = await this.createImage("character", { preset: "sprite" }); // 64x64, pixel-art
+```
+
+**MCP Tool:**
+```typescript
+forge_create_image({
+  prompt: "party hat icon",
+  options: {
+    width: 512,
+    height: 512,
+    transparent: true,
+    style: "illustration",
+    preset: "icon"  // Overrides dimensions/style
+  }
+})
+```
+
+### Text-to-Speech
+
+Generate speech audio using OpenAI TTS:
+
+```typescript
+// Runtime API (in components)
+const audioUrl = await this.createSpeech("Hello, welcome!");
+const audioUrl = await this.createSpeech("Time for refills!", {
+  voice: "nova",     // alloy | echo | fable | onyx | nova | shimmer
+  speed: 1.0,        // 0.25 to 4.0
+  format: "mp3"      // mp3 | opus | aac | flac
+});
+
+// Play the audio
+const audio = new Audio(audioUrl);
+audio.play();
+```
+
+**Available Voices:**
+| Voice | Description |
+|-------|-------------|
+| alloy | Neutral, balanced voice |
+| echo | Warm, conversational male |
+| fable | Expressive, British-accented |
+| onyx | Deep, authoritative male |
+| nova | Friendly, upbeat female |
+| shimmer | Clear, professional female |
+
+**MCP Tool:**
+```typescript
+forge_create_speech({
+  text: "Hello, welcome to the party!",
+  options: {
+    voice: "nova",
+    speed: 1.0,
+    format: "mp3"
+  }
+})
+```
+
+### Asset Caching
+
+Assets are automatically cached based on a hash of the prompt/text and options:
+
+- Same prompt + options = same URL (instant return from cache)
+- Stored in R2 with 1-year CDN cache headers
+- Indexed in Vectorize for semantic search
+
+**Search existing assets:**
+```typescript
+forge_search_assets({
+  query: "party icons",
+  type: "image",  // Optional: "image" | "speech"
+  limit: 10
+})
+```
+
+### HTTP API
+
+```
+POST /api/forge/assets/image
+Body: { prompt: string, options?: ImageOptions }
+Response: { id, url, type, cached, width, height, created_at, timing_ms }
+
+POST /api/forge/assets/speech
+Body: { text: string, options?: SpeechOptions }
+Response: { id, url, type, cached, created_at, timing_ms }
+
+GET /api/forge/assets/search?q=...&type=...&limit=...
+Response: { query, results: AssetMetadata[], total }
+
+GET /api/forge/assets/:id
+Response: AssetMetadata
+
+GET /api/forge/assets/:id/file
+Response: Binary file (image or audio)
+```
+
+### Use Cases
+
+- **Dynamic avatars/icons** - Generate unique user avatars on the fly
+- **Custom illustrations** - Cards, backgrounds, UI elements
+- **Game assets** - Procedurally generate sprites, tiles, characters
+- **Personalized content** - Birthday cards, invitations, certificates
+- **Accessibility** - Components that speak their content
+- **Voice notifications** - "Helen needs a wine refill!" 🍷
+- **Games** - Character dialogue, narration
+- **Tutorials** - Spoken instructions with generated illustrations
+
+---
+
 ## LLM System Prompt
 
 The Forge service calls out to an LLM to generate components. The system prompt should instruct it:

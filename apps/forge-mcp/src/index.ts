@@ -481,6 +481,133 @@ The composition is now live! Visit ${url} to see all components working together
 The bundle URL loads all component dependencies in a single request.`;
 }
 
+// Asset generation functions
+async function forgeCreateImage(
+  prompt: string,
+  options?: {
+    width?: number;
+    height?: number;
+    transparent?: boolean;
+    style?: "illustration" | "photo" | "3d" | "pixel-art";
+    preset?: "icon" | "hero" | "sprite";
+  }
+): Promise<string> {
+  const result = await forgeApi<{
+    id: string;
+    url: string;
+    type: "image";
+    cached: boolean;
+    width?: number;
+    height?: number;
+    created_at: string;
+    timing_ms: number;
+  }>("/api/forge/assets/image", {
+    method: "POST",
+    body: JSON.stringify({ prompt, options }),
+  });
+
+  const cached = result.cached ? " (cached)" : "";
+  const dims = result.width && result.height ? `${result.width}x${result.height}` : "unknown size";
+
+  return `Generated image${cached}: ${result.id}
+
+URL: ${result.url}
+Dimensions: ${dims}
+Generated in: ${result.timing_ms}ms
+
+You can use this URL directly in your components:
+- As an image: <img src="${result.url}" />
+- As a background: style="background-image: url('${result.url}')"
+- In CSS: --bg-image: url('${result.url}')
+
+The image is cached - requesting the same prompt and options will return this URL instantly.`;
+}
+
+async function forgeCreateSpeech(
+  text: string,
+  options?: {
+    voice?: "alloy" | "ash" | "ballad" | "coral" | "echo" | "fable" | "onyx" | "nova" | "sage" | "shimmer" | "verse" | "marin" | "cedar";
+    speed?: number;
+    format?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
+    instructions?: string;
+  }
+): Promise<string> {
+  const result = await forgeApi<{
+    id: string;
+    url: string;
+    type: "speech";
+    cached: boolean;
+    created_at: string;
+    timing_ms: number;
+  }>("/api/forge/assets/speech", {
+    method: "POST",
+    body: JSON.stringify({ text, options }),
+  });
+
+  const cached = result.cached ? " (cached)" : "";
+  const voice = options?.voice || "alloy";
+  const instructions = options?.instructions ? `\nInstructions: "${options.instructions}"` : "";
+
+  return `Generated speech${cached}: ${result.id}
+
+URL: ${result.url}
+Voice: ${voice}${instructions}
+Generated in: ${result.timing_ms}ms
+
+You can use this URL in your components:
+- As audio: <audio src="${result.url}" controls></audio>
+- Auto-play: new Audio("${result.url}").play()
+
+The audio is cached - requesting the same text and options will return this URL instantly.
+
+Tip: Use instructions for custom voice styles like "talk like a pirate" or "speak in a whisper".`;
+}
+
+async function forgeSearchAssets(
+  query: string,
+  type?: "image" | "speech",
+  limit: number = 10
+): Promise<string> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  if (type) params.append("type", type);
+
+  const response = await forgeApi<{
+    query: string;
+    results: Array<{
+      id: string;
+      type: "image" | "speech";
+      prompt: string;
+      url: string;
+      created_at: string;
+    }>;
+    total: number;
+  }>(`/api/forge/assets/search?${params}`);
+
+  if (!response.results.length) {
+    return `No assets found matching "${query}".
+
+You can create new assets using:
+- forge_create_image for images
+- forge_create_speech for audio`;
+  }
+
+  const formatted = response.results
+    .map((r, i) => {
+      const icon = r.type === "image" ? "🖼️" : "🔊";
+      return `${i + 1}. ${icon} ${r.id}
+   Type: ${r.type}
+   "${r.prompt.slice(0, 80)}${r.prompt.length > 80 ? "..." : ""}"
+   URL: ${r.url}`;
+    })
+    .join("\n\n");
+
+  return `Found ${response.results.length} asset${response.results.length > 1 ? "s" : ""} matching "${query}":
+
+${formatted}
+
+These assets are already generated and cached - use the URLs directly in components.`;
+}
+
 // Create and configure the MCP server
 const server = new Server(
   {
@@ -728,6 +855,105 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["name", "description", "components", "layout", "wiring"],
       },
     },
+
+    // Asset generation tools
+    {
+      name: "forge_create_image",
+      description:
+        "Generate an image from a natural language description. Images are cached - the same prompt returns the same URL. Use this for icons, backgrounds, illustrations, avatars, etc.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description: "Description of the image to generate (e.g., 'party hat icon', 'robot avatar')",
+          },
+          options: {
+            type: "object",
+            description: "Generation options",
+            properties: {
+              width: { type: "number", description: "Image width in pixels (default: 512)" },
+              height: { type: "number", description: "Image height in pixels (default: 512)" },
+              transparent: { type: "boolean", description: "Generate with transparent background (default: false)" },
+              style: {
+                type: "string",
+                enum: ["illustration", "photo", "3d", "pixel-art"],
+                description: "Visual style hint",
+              },
+              preset: {
+                type: "string",
+                enum: ["icon", "hero", "sprite"],
+                description: "Preset overrides dimensions/style: icon (512x512, transparent), hero (1920x1080), sprite (64x64, pixel-art)",
+              },
+            },
+          },
+        },
+        required: ["prompt"],
+      },
+    },
+    {
+      name: "forge_create_speech",
+      description:
+        "Generate speech audio from text using AI text-to-speech (gpt-4o-mini-tts). Audio is cached. Supports instructions for voice style like 'talk like a pirate'.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "Text to convert to speech",
+          },
+          options: {
+            type: "object",
+            description: "TTS options",
+            properties: {
+              voice: {
+                type: "string",
+                enum: ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar"],
+                description: "Voice to use (default: alloy)",
+              },
+              speed: {
+                type: "number",
+                description: "Playback speed from 0.25 to 4.0 (default: 1.0)",
+              },
+              format: {
+                type: "string",
+                enum: ["mp3", "opus", "aac", "flac", "wav", "pcm"],
+                description: "Audio format (default: mp3)",
+              },
+              instructions: {
+                type: "string",
+                description: "Voice style instructions (e.g., 'talk like a pirate', 'speak in a whisper', 'sound excited')",
+              },
+            },
+          },
+        },
+        required: ["text"],
+      },
+    },
+    {
+      name: "forge_search_assets",
+      description:
+        "Search for existing generated assets (images and speech) by semantic similarity. Use this to find assets that were already generated.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query (e.g., 'party', 'robot', 'greeting')",
+          },
+          type: {
+            type: "string",
+            enum: ["image", "speech"],
+            description: "Filter by asset type",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum results to return (default: 10)",
+          },
+        },
+        required: ["query"],
+      },
+    },
   ],
 }));
 
@@ -795,6 +1021,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }>;
           styles?: string;
         });
+        break;
+
+      case "forge_create_image":
+        result = await forgeCreateImage(
+          args?.prompt as string,
+          args?.options as {
+            width?: number;
+            height?: number;
+            transparent?: boolean;
+            style?: "illustration" | "photo" | "3d" | "pixel-art";
+            preset?: "icon" | "hero" | "sprite";
+          }
+        );
+        break;
+
+      case "forge_create_speech":
+        result = await forgeCreateSpeech(
+          args?.text as string,
+          args?.options as {
+            voice?: "alloy" | "ash" | "ballad" | "coral" | "echo" | "fable" | "onyx" | "nova" | "sage" | "shimmer" | "verse" | "marin" | "cedar";
+            speed?: number;
+            format?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
+            instructions?: string;
+          }
+        );
+        break;
+
+      case "forge_search_assets":
+        result = await forgeSearchAssets(
+          args?.query as string,
+          args?.type as "image" | "speech" | undefined,
+          args?.limit as number | undefined
+        );
         break;
 
       default:
