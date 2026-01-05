@@ -1086,6 +1086,8 @@ class StorageAPI {
     this.componentId = componentId;
     this.scope = scope;
     this.instanceId = instanceId;
+    this._pending = new Map();
+    this._timers = new Map();
   }
 
   url(key) {
@@ -1100,6 +1102,8 @@ class StorageAPI {
   }
 
   async get(key) {
+    // Return pending write for read-your-writes consistency
+    if (this._pending.has(key)) return this._pending.get(key);
     try {
       const response = await fetch(this.url(key));
       if (!response.ok) return null;
@@ -1109,14 +1113,26 @@ class StorageAPI {
   }
 
   async set(key, value) {
-    await fetch(this.url(key), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(value),
-    });
+    // Store pending value for read-your-writes
+    this._pending.set(key, value);
+    // Debounce writes (300ms) to avoid KV rate limiting
+    if (this._timers.has(key)) clearTimeout(this._timers.get(key));
+    this._timers.set(key, setTimeout(async () => {
+      this._timers.delete(key);
+      try {
+        await fetch(this.url(key), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(value),
+        });
+      } finally {
+        if (this._pending.get(key) === value) this._pending.delete(key);
+      }
+    }, 300));
   }
 
   async delete(key) {
+    this._pending.delete(key);
     await fetch(this.url(key), { method: 'DELETE' });
   }
 
@@ -1127,6 +1143,107 @@ class StorageAPI {
       const data = await response.json();
       return data.keys || [];
     } catch { return []; }
+  }
+}
+
+// DOM morphing - updates existing DOM to match new structure while preserving focus
+function morph(fromNode, toNode) {
+  // Different node types - replace entirely
+  if (fromNode.nodeType !== toNode.nodeType || fromNode.nodeName !== toNode.nodeName) {
+    fromNode.parentNode?.replaceChild(toNode.cloneNode(true), fromNode);
+    return;
+  }
+
+  // Text nodes - update content
+  if (fromNode.nodeType === 3) {
+    if (fromNode.textContent !== toNode.textContent) {
+      fromNode.textContent = toNode.textContent;
+    }
+    return;
+  }
+
+  // Element nodes
+  if (fromNode.nodeType === 1) {
+    // Skip morphing focused inputs to preserve cursor position
+    // Use :focus pseudo-class which works correctly in Shadow DOM
+    const isFocused = fromNode.matches && fromNode.matches(':focus');
+    const isFocusedInput = isFocused &&
+      (fromNode.tagName === 'INPUT' || fromNode.tagName === 'TEXTAREA' || fromNode.tagName === 'SELECT');
+
+    // Update attributes (but preserve value on focused inputs)
+    const fromAttrs = new Set(Array.from(fromNode.attributes).map(a => a.name));
+    const toAttrs = new Set(Array.from(toNode.attributes).map(a => a.name));
+
+    // Remove old attributes
+    for (const name of fromAttrs) {
+      if (!toAttrs.has(name)) fromNode.removeAttribute(name);
+    }
+
+    // Add/update attributes
+    for (const attr of toNode.attributes) {
+      // Skip value on focused inputs
+      if (isFocusedInput && attr.name === 'value') continue;
+      if (fromNode.getAttribute(attr.name) !== attr.value) {
+        fromNode.setAttribute(attr.name, attr.value);
+      }
+    }
+
+    // Sync special properties (but not on focused inputs)
+    if (!isFocusedInput) {
+      if ('value' in toNode && fromNode.value !== toNode.value) fromNode.value = toNode.value;
+      if ('checked' in toNode && fromNode.checked !== toNode.checked) fromNode.checked = toNode.checked;
+      if ('selected' in toNode && fromNode.selected !== toNode.selected) fromNode.selected = toNode.selected;
+    }
+
+    // Morph children
+    const fromChildren = Array.from(fromNode.childNodes);
+    const toChildren = Array.from(toNode.childNodes);
+
+    // Build key map for efficient matching
+    const fromKeyMap = new Map();
+    fromChildren.forEach((child, i) => {
+      const key = child.nodeType === 1 ? child.getAttribute('key') || child.getAttribute('id') : null;
+      if (key) fromKeyMap.set(key, { node: child, index: i });
+    });
+
+    let fromIndex = 0;
+    for (let toIndex = 0; toIndex < toChildren.length; toIndex++) {
+      const toChild = toChildren[toIndex];
+      const toKey = toChild.nodeType === 1 ? toChild.getAttribute('key') || toChild.getAttribute('id') : null;
+
+      // Try to find matching node by key
+      if (toKey && fromKeyMap.has(toKey)) {
+        const match = fromKeyMap.get(toKey);
+        if (match.index !== fromIndex) {
+          // Move node to correct position
+          fromNode.insertBefore(match.node, fromChildren[fromIndex] || null);
+        }
+        morph(match.node, toChild);
+        fromIndex++;
+        continue;
+      }
+
+      // Match by position
+      if (fromIndex < fromChildren.length) {
+        const fromChild = fromChildren[fromIndex];
+        // If types match, morph; otherwise replace
+        if (fromChild.nodeType === toChild.nodeType && fromChild.nodeName === toChild.nodeName) {
+          morph(fromChild, toChild);
+        } else {
+          fromNode.replaceChild(toChild.cloneNode(true), fromChild);
+        }
+        fromIndex++;
+      } else {
+        // No more from children - append
+        fromNode.appendChild(toChild.cloneNode(true));
+      }
+    }
+
+    // Remove extra from children
+    while (fromIndex < fromChildren.length) {
+      fromNode.removeChild(fromChildren[fromIndex]);
+      fromIndex++;
+    }
   }
 }
 
@@ -1207,8 +1324,12 @@ export class ForgeComponent extends HTMLElement {
     if (typeof rendered === 'string') {
       this.shadowRoot.innerHTML = rendered;
     } else if (rendered instanceof Node) {
-      this.shadowRoot.innerHTML = '';
-      this.shadowRoot.appendChild(rendered);
+      // Use DOM morphing to preserve focus and input state
+      if (this.shadowRoot.firstChild) {
+        morph(this.shadowRoot.firstChild, rendered);
+      } else {
+        this.shadowRoot.appendChild(rendered);
+      }
     }
   }
 
@@ -1256,6 +1377,12 @@ export function h(tag, attrs, ...children) {
       if (key === 'style' && typeof value === 'object') Object.assign(el.style, value);
       else if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2).toLowerCase(), value);
       else if (key === 'className') el.className = String(value);
+      // Handle form element properties that need to be set as properties, not attributes
+      else if (key === 'value' && (tag === 'input' || tag === 'textarea' || tag === 'select')) {
+        el.value = String(value ?? '');
+      }
+      else if (key === 'checked' && tag === 'input') el.checked = Boolean(value);
+      else if (key === 'selected' && tag === 'option') el.selected = Boolean(value);
       else if (typeof value === 'boolean') { if (value) el.setAttribute(key, ''); }
       else el.setAttribute(key, String(value));
     }
