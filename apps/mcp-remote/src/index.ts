@@ -806,6 +806,14 @@ async function handleToolCall(
             "createSpeech(text, options?)": "Generate speech, returns URL. Options: voice (alloy/ash/ballad/coral/echo/fable/onyx/nova/sage/shimmer/verse/marin/cedar), speed, format, instructions",
           },
 
+          ai: {
+            description: "Add intelligence to components with AI chat/completion",
+            "ai(prompt, options?)": "Simple prompt with optional system message. Options: system (personality/instructions), maxTokens (default 256, max 1024)",
+            "ai(messages[])": "Multi-turn conversation with [{role: 'system'|'user'|'assistant', content: string}]",
+            model: "@cf/meta/llama-3.1-8b-instruct (fast, capable)",
+            example: "const response = await this.ai('Hello!', { system: 'You are a playful cat named Whiskers.' })",
+          },
+
           storage: {
             description: "Persistent KV storage with automatic debouncing (300ms)",
             "this.instance": "Storage scoped to this component instance",
