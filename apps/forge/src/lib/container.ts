@@ -22,7 +22,13 @@ export class ForgeGenerator extends Container {
 
   // Pass secrets to container as environment variables
   envVars = {
+    // Provider selection: 'gemini' or 'anthropic'
+    LLM_PROVIDER: (env as Record<string, string>).LLM_PROVIDER || 'gemini',
+    // Gemini config
     GEMINI_API_KEY: (env as Record<string, string>).GEMINI_API_KEY,
     GEMINI_MODEL: (env as Record<string, string>).GEMINI_MODEL || 'gemini-3-flash-preview',
+    // Anthropic config
+    ANTHROPIC_API_KEY: (env as Record<string, string>).ANTHROPIC_API_KEY,
+    ANTHROPIC_MODEL: (env as Record<string, string>).ANTHROPIC_MODEL || 'claude-sonnet-4-5',
   };
 }

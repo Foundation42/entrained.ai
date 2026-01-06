@@ -10,9 +10,22 @@ import * as esbuild from 'esbuild';
 import { PLANNER_PROMPT, GENERATOR_PROMPT, UPDATE_PROMPT } from './prompts';
 
 const PORT = 8080;
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
+
+// Provider selection: 'gemini' or 'anthropic'
+const LLM_PROVIDER = process.env.LLM_PROVIDER || 'gemini';
+
+// Gemini configuration
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
+
+// Anthropic configuration
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const ANTHROPIC_API_BASE = 'https://api.anthropic.com';
+
+// Active model for logging/provenance
+const MODEL = LLM_PROVIDER === 'anthropic' ? ANTHROPIC_MODEL : GEMINI_MODEL;
 
 // ============================================
 // Zod Schemas
@@ -87,7 +100,7 @@ async function callGemini(
   temperature = 0.3,
   maxRetries = 3
 ): Promise<string> {
-  const url = `${GEMINI_API_BASE}/v1beta/models/${MODEL}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+  const url = `${GEMINI_API_BASE}/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     if (attempt > 0) {
@@ -97,7 +110,7 @@ async function callGemini(
     }
 
     try {
-      log(`   → Calling Gemini SSE (${MODEL})...`);
+      log(`   → Calling Gemini SSE (${GEMINI_MODEL})...`);
       const start = Date.now();
 
       const contents = [];
@@ -180,13 +193,132 @@ async function callGemini(
 }
 
 // ============================================
+// Anthropic API Client (SSE Streaming)
+// ============================================
+
+async function callAnthropic(
+  prompt: string,
+  systemPrompt?: string,
+  temperature = 0.3,
+  maxRetries = 3
+): Promise<string> {
+  const url = `${ANTHROPIC_API_BASE}/v1/messages`;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (attempt > 0) {
+      const waitTime = Math.pow(2, attempt) * 1000;
+      log(`   ↻ Retry ${attempt + 1}/${maxRetries} after ${waitTime}ms...`);
+      await Bun.sleep(waitTime);
+    }
+
+    try {
+      log(`   → Calling Anthropic SSE (${ANTHROPIC_MODEL})...`);
+      const start = Date.now();
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 16384,
+          temperature,
+          system: systemPrompt || undefined,
+          messages: [{ role: 'user', content: prompt }],
+          stream: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Anthropic API error: ${response.status} - ${error.slice(0, 200)}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const chunks: string[] = [];
+      let chunkCount = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        chunkCount++;
+
+        if (chunkCount % 10 === 0) {
+          log(`   ... streaming chunk ${chunkCount}`);
+        }
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6);
+            if (jsonStr.trim() === '[DONE]') continue;
+
+            try {
+              const data = JSON.parse(jsonStr) as {
+                type: string;
+                delta?: { type: string; text?: string };
+              };
+              if (data.type === 'content_block_delta' && data.delta?.text) {
+                chunks.push(data.delta.text);
+              }
+            } catch {}
+          }
+        }
+      }
+
+      const elapsed = Date.now() - start;
+      const fullText = chunks.join('');
+
+      if (!fullText) {
+        throw new Error('No content in Anthropic response');
+      }
+
+      log(`   ← Anthropic responded: ${fullText.length} chars in ${elapsed}ms (${chunkCount} chunks)`);
+      return fullText;
+    } catch (error) {
+      log(`   ✗ Attempt ${attempt + 1} failed: ${error}`);
+      if (attempt === maxRetries - 1) throw error;
+    }
+  }
+
+  throw new Error('All retries exhausted');
+}
+
+// ============================================
+// Unified LLM Client (Routes to active provider)
+// ============================================
+
+async function callLLM(
+  prompt: string,
+  systemPrompt?: string,
+  temperature = 0.3,
+  maxRetries = 3
+): Promise<string> {
+  if (LLM_PROVIDER === 'anthropic') {
+    return callAnthropic(prompt, systemPrompt, temperature, maxRetries);
+  }
+  return callGemini(prompt, systemPrompt, temperature, maxRetries);
+}
+
+// ============================================
 // Manifest Generation (Planner)
 // ============================================
 
 async function generateManifest(description: string): Promise<Manifest> {
   log(`Planning component: "${description.slice(0, 50)}..."`);
 
-  const response = await callGemini(
+  const response = await callLLM(
     `Create a manifest for this component:\n\n${description}`,
     PLANNER_PROMPT
   );
@@ -260,7 +392,7 @@ Common fixes:
 
 Generate the complete TSX code:`;
 
-  const response = await callGemini(prompt, GENERATOR_PROMPT);
+  const response = await callLLM(prompt, GENERATOR_PROMPT);
 
   // Extract TSX from response
   let tsx = response.trim();
@@ -374,7 +506,7 @@ IMPORTANT: The previous update had compilation errors. Please fix them:
 ${errorContext}`;
   }
 
-  const response = await callGemini(prompt);
+  const response = await callLLM(prompt);
 
   let tsx = response.trim();
   if (tsx.includes('```')) {

@@ -88,8 +88,16 @@ class {ClassName} extends ForgeComponent<{ClassName}Props> {
   private items: Item[] = [];
 
   async onMount() {
-    // Called when component is added to DOM
+    // Called when component is added to DOM (BEFORE first render)
     // Load data, set up event listeners, etc.
+    // NOTE: refs are NOT available yet - use onFirstRender for DOM/canvas setup
+  }
+
+  onFirstRender() {
+    // Called AFTER the first render completes (deferred to next animation frame)
+    // Use this for DOM operations that need refs (canvas, video, etc.)
+    // Example: this.canvas is now available from ref={(el) => this.canvas = el}
+    // IMPORTANT: For canvas games, start your game loop here, not in onMount!
   }
 
   onUpdate(changedProps: string[]) {
@@ -150,8 +158,13 @@ this.props                    // Access typed props
 this.emit(name, detail)       // Emit custom event
 this.query(selector)          // Query shadow DOM
 this.queryAll(selector)       // Query all in shadow DOM
-this.update()                 // Trigger re-render
+this.update()                 // Trigger full DOM re-render (EXPENSIVE - see warning below)
 \`\`\`
+
+**WARNING about this.update()**: This method re-renders the ENTIRE shadow DOM.
+- NEVER call it in a game loop or animation frame - it will destroy performance
+- For canvas games: only call draw() methods in your game loop, NOT this.update()
+- Only call this.update() when you need to change the DOM structure (e.g., showing/hiding elements)
 
 ### Asset Generation
 \`\`\`tsx
@@ -255,6 +268,37 @@ When a component emits events for parents to handle, document that behavior:
 <button onClick={() => this.emit('share', { id: this.item.id })}>
   Share
 </button>
+\`\`\`
+
+### Canvas Games
+For games using canvas, follow this pattern:
+\`\`\`tsx
+private canvas: HTMLCanvasElement | null = null;
+private ctx: CanvasRenderingContext2D | null = null;
+private animationFrame: number = 0;
+
+onFirstRender() {
+  // Canvas ref is now available - set up and start game loop
+  this.ctx = this.canvas?.getContext('2d');
+  this.gameLoop();
+}
+
+onUnmount() {
+  if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
+}
+
+gameLoop = () => {
+  this.updateGameState();  // Update positions, check collisions
+  this.draw();             // Draw to canvas
+  // NEVER call this.update() here - that re-renders the entire DOM!
+  this.animationFrame = requestAnimationFrame(this.gameLoop);
+};
+
+render() {
+  return (
+    <canvas ref={(el) => this.canvas = el} width={800} height={600} />
+  );
+}
 \`\`\`
 
 ## Best Practices

@@ -84,11 +84,17 @@ new_sqlite_classes = ["ForgeGenerator", "ForgeJob"]
 crons = ["*/3 * * * *"]
 
 [vars]
+# LLM Provider: 'gemini' or 'anthropic'
+LLM_PROVIDER = "anthropic"
+# Gemini config
 GEMINI_MODEL = "gemini-3-flash-preview"
 GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+# Anthropic config
+ANTHROPIC_MODEL = "claude-sonnet-4-5"
 
 # Secrets (set via wrangler secret put):
-# - GEMINI_API_KEY: For component + image generation
+# - GEMINI_API_KEY: For image generation (and component generation if using Gemini)
+# - ANTHROPIC_API_KEY: For component generation (if using Anthropic)
 # - OPENAI_API_KEY: For text-to-speech
 
 # Development overrides
