@@ -16,6 +16,7 @@ import {
   imageRequestToOptions,
   generateSpeech,
   speechRequestToOptions,
+  generateCssForComponent,
 } from '../generation';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -245,6 +246,7 @@ export default function ${manifest.canonical_name.replace(/-/g, '')}(props: Prop
 /**
  * POST /api/forge/create
  * Create a new component from description
+ * Automatically generates matching CSS for the component's css_classes
  */
 app.post('/create', async (c) => {
   const body = await c.req.json() as {
@@ -270,7 +272,7 @@ app.post('/create', async (c) => {
     // Generate TSX file
     const result = await generateFile(description, 'tsx', { style: hints?.style }, c.env);
 
-    // Store as asset
+    // Store TSX as asset
     const manifest = await service.create({
       name: result.canonical_name || 'component',
       type: 'file',
@@ -292,6 +294,55 @@ app.post('/create', async (c) => {
       },
     });
 
+    // Auto-generate CSS if component has css_classes
+    let cssManifest: Awaited<ReturnType<typeof service.create>> | null = null;
+    if (result.css_classes && result.css_classes.length > 0) {
+      console.log(`[ForgeAPI] Auto-generating CSS for ${result.css_classes.length} classes: ${result.css_classes.slice(0, 5).join(', ')}`);
+      try {
+        const cssResult = await generateCssForComponent(
+          result.css_classes,
+          description,
+          hints?.style,
+          c.env
+        );
+        console.log(`[ForgeAPI] CSS generated: ${cssResult.content.length} bytes`);
+
+        // Store CSS as asset linked to the component
+        cssManifest = await service.create({
+          name: `${result.canonical_name || 'component'}-styles`,
+          type: 'file',
+          file_type: 'css',
+          description: `Styles for: ${description}`,
+          content: cssResult.content,
+          mime_type: 'text/css',
+          provenance: {
+            ai_model: cssResult.model,
+            ai_provider: cssResult.provider,
+            source_type: 'ai_generated',
+            generation_params: {
+              component_id: manifest.id,
+              css_classes: result.css_classes,
+              style: hints?.style,
+            },
+          },
+          metadata: {
+            component_id: manifest.id,
+            classes_defined: cssResult.classes_defined,
+            variables_defined: cssResult.variables_defined,
+            keyframes_defined: cssResult.keyframes_defined,
+          },
+        });
+        console.log(`[ForgeAPI] Created CSS asset: ${cssManifest.id}`);
+      } catch (cssError) {
+        // CSS generation failed, but component was created successfully
+        const errMsg = cssError instanceof Error ? cssError.message : String(cssError);
+        console.error('[ForgeAPI] CSS auto-generation failed:', errMsg);
+        // Continue without CSS - component is still usable
+      }
+    } else {
+      console.log(`[ForgeAPI] No css_classes to generate CSS for`);
+    }
+
     return c.json({
       id: manifest.id,
       name: manifest.canonical_name,
@@ -301,6 +352,11 @@ app.post('/create', async (c) => {
       content_url: manifest.content_url,
       props: result.props,
       css_classes: result.css_classes,
+      // Include CSS info if generated
+      css: cssManifest ? {
+        id: cssManifest.id,
+        content_url: cssManifest.content_url,
+      } : undefined,
     }, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
