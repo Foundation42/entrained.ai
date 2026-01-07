@@ -10,11 +10,11 @@ Collected from Claude Chat testing session (2026-01-07)
 - **Expected**: Components should have immediate demo/preview URL upon creation
 - **Fix**: Auto-generate single-component bundle with demo_props after creation
 
-### 2. CSS Not Bundled Automatically
+### ~~2. CSS Not Bundled Automatically~~ ✅ FIXED
 - **Issue**: Components generate without any styling
-- **Impact**: Everything looks broken until you manually add CSS
-- **Expected**: Components should include default/demo styles or make it clear styling is separate
-- **Fix**: Option A) Generate CSS alongside TSX, Option B) Inline critical styles in component
+- **Status**: FIXED - `forge_create` now auto-generates matching CSS for all css_classes
+- **Response includes**: `css: { id, content_url }` with the generated stylesheet
+- **Commit**: f66d03a
 
 ### ~~3. Missing React Imports~~ ✅ FIXED
 - **Issue**: Components frequently missing `useState`, `useEffect`, `useRef` imports
@@ -130,6 +130,7 @@ Collected from Claude Chat testing session (2026-01-07)
 
 ## Recently Fixed
 
+- **Auto-generate CSS** - `forge_create` now generates matching CSS for component's css_classes (f66d03a)
 - **Missing React imports** - Post-generation validation now fixes missing useState/useEffect/useRef imports (023345e)
 - **Multi-component demo_props** - Compositions now pass props to each component correctly (a8a9edc)
 - **updateFile metadata** - Updates now preserve props/demo_props metadata (6bf445a)
