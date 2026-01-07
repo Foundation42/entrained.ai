@@ -60,10 +60,11 @@ export class VectorizeStorage {
       text: [text],
     });
 
-    // The model returns { data: [{ values: number[] }] }
-    const embedding = (result as { data: { values: number[] }[] }).data[0]?.values;
+    // Workers AI returns { shape: [1, 768], data: [[...]] }
+    const data = (result as { data: number[][] }).data;
+    const embedding = data?.[0];
 
-    if (!embedding) {
+    if (!embedding || embedding.length === 0) {
       throw new Error('Failed to generate embedding');
     }
 

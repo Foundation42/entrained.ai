@@ -117,7 +117,7 @@ export async function generateImage(
 
   const resolved = resolveOptions(options);
   const fullPrompt = buildPrompt(prompt, resolved);
-  const model = env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-exp';
+  const model = env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
 
   const url = `${GEMINI_API_BASE}/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
 

@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "forge-db"
-database_id = "placeholder-replace-with-actual-id"
+database_id = "8c49079d-0f51-4a63-ad34-b873e991d791"
 migrations_dir = "migrations"
 
 # R2 Buckets
@@ -18,7 +18,7 @@ bucket_name = "forge2-assets"
 # KV Namespaces (for fast lookups and caching)
 [[kv_namespaces]]
 binding = "CACHE"
-id = "placeholder-replace-with-actual-id"
+id = "2f18e4bb3dcf474f81ad678acf045b67"
 
 # Vectorize for semantic search
 [[vectorize]]
@@ -32,9 +32,9 @@ binding = "AI"
 # Environment variables
 [vars]
 LLM_PROVIDER = "anthropic"
-ANTHROPIC_MODEL = "claude-sonnet-4-5-20250514"
-GEMINI_MODEL = "gemini-2.5-flash-preview-05-20"
-GEMINI_IMAGE_MODEL = "gemini-2.5-flash-preview-image-01"
+ANTHROPIC_MODEL = "claude-sonnet-4-5"
+GEMINI_MODEL = "gemini-3-flash-preview"
+GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 
 # Development overrides
 [env.dev]
