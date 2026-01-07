@@ -470,10 +470,24 @@ export async function generateCssForComponent(
 Rules:
 - Define CSS rules for EXACTLY the class names given - no more, no less
 - Use modern CSS features (custom properties, flexbox, grid)
-- Include responsive design considerations
+- Include responsive design with mobile-first approach
 - Use relative units (rem, em) over pixels where appropriate
 - Group related properties logically
 - Make the styles visually appealing and professional
+
+Layout best practices:
+- Grid containers: use "grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))" for responsive card grids
+- Flex containers: use "flex: 1" or "flex-grow: 1" for items that should fill space
+- Sections/containers should be "width: 100%" to fill their parent
+- Use "max-width" with "margin: 0 auto" for centered content with readable line lengths
+- Card/item components should NOT have fixed widths - let the grid/flex parent control sizing
+- Use "gap" for spacing between grid/flex items instead of margins
+
+Shadow and effect best practices:
+- For glows/shadows, prefer "box-shadow" over pseudo-elements (simpler, fewer positioning bugs)
+- If using ::before/::after for effects, parent MUST have "position: relative" and pseudo MUST have "position: absolute"
+- Keep box-shadow offsets small (0-8px) for natural shadows; use blur for glow effects
+- For centered glows: "box-shadow: 0 0 20px rgba(color)" with NO x/y offset
 
 Output a JSON object with these keys:
 1. "code": The complete CSS code (as a string)

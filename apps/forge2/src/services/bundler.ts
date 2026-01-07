@@ -396,8 +396,25 @@ export class BundlerService {
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-  <!-- Bundled Styles -->
+  <!-- Base Reset + Bundled Styles -->
   <style>
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+}
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+img {
+  max-width: 100%;
+  height: auto;
+}
 ${css}
 ${customStyles ?? ''}
   </style>
