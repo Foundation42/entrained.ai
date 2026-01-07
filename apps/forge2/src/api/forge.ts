@@ -84,12 +84,31 @@ app.get('/about', (c) => {
       apps: 'Full orchestration: Plan → Generate Components → Generate CSS → Generate Media → Compose → Deploy',
     },
 
+    externalLibraries: {
+      description: 'Components can import external libraries - they are automatically loaded from CDN',
+      howToUse: 'Just import normally: import * as THREE from "three" or import { gsap } from "gsap"',
+      supported: {
+        '3D Graphics': ['three (Three.js)'],
+        'Data Visualization': ['d3', 'chart.js', 'plotly.js', 'plotly.js-dist'],
+        'Animation': ['gsap', 'animejs', 'anime', 'framer-motion'],
+        'Audio': ['tone (Tone.js)'],
+        'Canvas/Graphics': ['p5', 'fabric', 'konva', 'react-konva'],
+        'Maps': ['leaflet', 'mapbox-gl'],
+        'Physics': ['matter-js'],
+        'Math': ['mathjs'],
+        'Utilities': ['lodash', 'axios', 'dayjs', 'moment', 'uuid'],
+        'Rich Text': ['marked', 'highlight.js'],
+        'Other': ['qrcode'],
+      },
+    },
+
     bestPractices: [
       'Search for existing assets before creating new ones',
       'Use forge_get_manifest to understand component interfaces',
       'Generated CSS classes are stored in metadata for AI-assisted styling',
       'Use forge_compose to bundle multiple files into deployable apps',
       'Asset generation is cached - same inputs return cached results',
+      'External libraries (Three.js, D3, GSAP, etc.) are auto-loaded from CDN - just import them!',
     ],
   });
 });

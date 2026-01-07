@@ -306,7 +306,9 @@ const TOOLS = [
 - props: Component's prop definitions
 - css_classes: CSS class names used
 
-The preview_url is immediately viewable - no need to call forge_compose for single components!`,
+EXTERNAL LIBRARIES SUPPORTED: You can use Three.js, D3, Chart.js, GSAP, Plotly, Tone.js, P5.js, Anime.js, Fabric.js, Konva, Leaflet, Mapbox, Lodash, Axios, and more! Just import them normally - they're automatically loaded from CDN (e.g., import * as THREE from 'three', import { gsap } from 'gsap').
+
+The preview_url is immediately viewable - no need to forge_compose for single components!`,
     inputSchema: {
       type: "object",
       properties: {
