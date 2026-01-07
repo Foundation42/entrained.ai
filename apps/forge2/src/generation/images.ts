@@ -175,7 +175,8 @@ export async function generateImage(
 
   // If transparency requested, generate a mask and merge
   if (resolved.transparent) {
-    console.log('[ImageGen] Generating transparency mask...');
+    console.log('[ImageGen] Transparency requested, generating mask...');
+    console.log(`[ImageGen] Image size: ${bytes.length} bytes, mimeType: ${imagePart.inlineData.mimeType}`);
     try {
       const maskResult = await generateMask(bytes.buffer as ArrayBuffer, imagePart.inlineData.mimeType, env);
       console.log(`[ImageGen] Generated mask: ${maskResult.data.byteLength} bytes`);
@@ -191,7 +192,9 @@ export async function generateImage(
         height: resolved.height,
       };
     } catch (maskError) {
-      console.warn('[ImageGen] Mask generation failed, returning image without transparency:', maskError);
+      const errMsg = maskError instanceof Error ? maskError.message : String(maskError);
+      console.error('[ImageGen] Mask generation failed:', errMsg);
+      console.error('[ImageGen] Full error:', JSON.stringify(maskError, Object.getOwnPropertyNames(maskError as object)));
       // Fall through to return original image
     }
   }
