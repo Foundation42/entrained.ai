@@ -16,11 +16,10 @@ RUN bun install
 COPY server.ts ./
 
 # Build version marker
-ENV FORGE_BUILD_VERSION=5
+ENV FORGE_BUILD_VERSION=15
 
 # Expose port
 EXPOSE 8080
 
 # Run the server
 CMD ["bun", "run", "server.ts"]
-# Rebuild trigger $(date)

@@ -378,8 +378,18 @@ export class BundlerService {
     console.log(`[Bundler] Entry point: ${entry}${syntheticEntry ? ' (synthetic)' : ''}`);
 
     // 5.5. Detect CDN libraries in source files
-    const detectedLibraries = detectCdnLibraries(resolvedFiles);
+    let detectedLibraries = detectCdnLibraries(resolvedFiles);
     console.log(`[Bundler] Detected ${detectedLibraries.length} CDN libraries: ${detectedLibraries.join(', ') || 'none'}`);
+
+    // Check if @react-three packages are used - if so, let Bun bundle three instead of CDN
+    const usesReactThree = resolvedFiles.some(f =>
+      f.content.includes('@react-three/fiber') || f.content.includes('@react-three/drei')
+    );
+    if (usesReactThree) {
+      // Remove 'three' from CDN list - Bun will bundle it with R3F
+      detectedLibraries = detectedLibraries.filter(lib => lib !== 'three');
+      console.log(`[Bundler] R3F detected - letting Bun bundle three instead of CDN`);
+    }
 
     // Build externals list: React + detected CDN libraries
     const externals = ['react', 'react-dom', ...detectedLibraries];
@@ -708,8 +718,21 @@ export default ForgeApp;
     // Note: For libraries with named exports (import { x } from 'lib'), we spread all
     // library properties so named imports like useState, useRef, gsap.to() work correctly
     const spreadLib = 'if (!m) return {}; if (m.__esModule) return m; var r = { default: m, __esModule: true }; for (var k in m) r[k] = m[k]; return r;';
+    // Create jsx-runtime shim that wraps React.createElement
+    // jsx(type, props, key) -> createElement(type, props) with children in props
+    const jsxRuntimeShim = `(function() {
+      var R = window.React;
+      function jsx(type, props, key) {
+        var newProps = key !== undefined ? Object.assign({}, props, { key: key }) : props;
+        return R.createElement(type, newProps);
+      }
+      return { jsx: jsx, jsxs: jsx, jsxDEV: jsx, Fragment: R.Fragment, __esModule: true };
+    })()`;
+
     const requireShimEntries: string[] = [
       `if (name === "react") { var m = window.React; ${spreadLib} }`,
+      `if (name === "react/jsx-runtime") { return cache[name] = ${jsxRuntimeShim}; }`,
+      `if (name === "react/jsx-dev-runtime") { return cache[name] = ${jsxRuntimeShim}; }`,
       `if (name === "react-dom") { var m = window.ReactDOM; ${spreadLib} }`,
       `if (name === "react-dom/client") { var m = window.ReactDOM; ${spreadLib} }`,
     ];

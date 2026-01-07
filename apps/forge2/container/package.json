@@ -1,12 +1,17 @@
 {
   "name": "forge2-bundler",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Forge 2.0 Bundler Container - esbuild-based bundling service",
   "type": "module",
   "scripts": {
     "start": "bun run server.ts"
   },
   "dependencies": {
-    "esbuild": "^0.27.0"
+    "esbuild": "^0.27.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.160.0",
+    "@react-three/fiber": "^8.15.0",
+    "@react-three/drei": "^9.92.0"
   }
 }

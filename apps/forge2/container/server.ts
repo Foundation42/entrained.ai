@@ -1,13 +1,16 @@
 /**
  * Forge 2.0 Bundler Container
  *
- * HTTP server that bundles TSX/TS/CSS files using esbuild.
+ * HTTP server that bundles TSX/TS/CSS files using Bun's native bundler.
  * Runs in a Cloudflare Durable Object container.
  */
 
-import * as esbuild from 'esbuild';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const PORT = 8080;
+// Use /app/bundles so Bun can find node_modules in /app/node_modules
+const TEMP_DIR = '/app/bundles';
 
 // =============================================================================
 // Types
@@ -72,191 +75,144 @@ interface ErrorResponse {
 // Bundler
 // =============================================================================
 
+let bundleCounter = 0;
+
 async function bundle(request: BundleRequest): Promise<BundleResponse> {
   const startTime = Date.now();
   const {
     files,
     entry,
-    format = 'iife',
     minify = true,
-    external = ['react', 'react-dom'],
+    external = ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'react-dom'],
     externalGlobals = {},
   } = request;
 
   // Build default globals for React
   const allGlobals: Record<string, string> = {
     'react': 'React',
+    'react/jsx-runtime': 'React',
+    'react/jsx-dev-runtime': 'React',
     'react-dom': 'ReactDOM',
     'react-dom/client': 'ReactDOM',
     ...externalGlobals,
   };
 
-  // Build require shim entries
-  // For libraries that use named exports (import { x } from 'lib'), we need to return
-  // an object that has the default export AND all named exports from the library.
-  // We spread the library object to include all its properties (useState, useRef, etc.)
+  // Build require shim that spreads all library properties for named imports
   const requireEntries = Object.entries(allGlobals)
     .map(([pkg, global]) => {
-      // Return object with default export + spread all library properties for named imports
       return `if (name === "${pkg}") { var m = window.${global}; if (!m) return {}; if (m.__esModule) return m; var r = { default: m, __esModule: true }; for (var k in m) r[k] = m[k]; return r; }`;
     })
     .join(' ');
 
-  // Also handle subpath imports (e.g., 'three/examples/...')
   const subpathEntries = Object.entries(externalGlobals)
     .map(([pkg, global]) => `if (name.startsWith("${pkg}/")) return window.${global};`)
     .join(' ');
 
   const requireShim = `var require = (function() { var cache = {}; return function(name) { if (cache[name]) return cache[name]; ${requireEntries} ${subpathEntries} console.warn("Unknown module:", name); return {}; }; })();`;
 
-  // Log input for debugging
-  console.log(`[Bundle] Files object keys: ${Object.keys(files).join(', ')}`);
-  console.log(`[Bundle] Entry point: ${entry}`);
+  // Create unique temp directory for this bundle
+  const bundleId = `bundle-${Date.now()}-${++bundleCounter}`;
+  const workDir = join(TEMP_DIR, bundleId);
 
-  // Create virtual filesystem plugin
-  const virtualFSPlugin: esbuild.Plugin = {
-    name: 'virtual-fs',
-    setup(build) {
-      // Resolve paths
-      build.onResolve({ filter: /.*/ }, (args) => {
-        console.log(`[VFS] onResolve: ${args.path} (kind: ${args.kind})`);
-
-        // Entry point
-        if (args.kind === 'entry-point') {
-          const exists = files[args.path] !== undefined;
-          console.log(`[VFS] Entry point ${args.path} exists: ${exists}`);
-          return { path: args.path, namespace: 'virtual' };
-        }
-
-        // Relative imports
-        if (args.path.startsWith('.')) {
-          const dir = args.importer.replace(/\/[^/]+$/, '') || '';
-          let resolved = `${dir}/${args.path}`.replace(/\/+/g, '/');
-
-          // Normalize path - handle . and .. segments
-          const parts = resolved.split('/').filter(Boolean);
-          const normalized: string[] = [];
-          for (const part of parts) {
-            if (part === '..') {
-              normalized.pop();
-            } else if (part !== '.') {
-              normalized.push(part);
-            }
-          }
-          resolved = '/' + normalized.join('/');
-
-          // Try with different extensions
-          const extensions = ['', '.tsx', '.ts', '.jsx', '.js', '.css', '.json'];
-          for (const ext of extensions) {
-            const tryPath = resolved + ext;
-            if (files[tryPath] !== undefined) {
-              return { path: tryPath, namespace: 'virtual' };
-            }
-          }
-
-          // Try index files
-          for (const ext of ['/index.tsx', '/index.ts', '/index.jsx', '/index.js']) {
-            const tryPath = resolved + ext;
-            if (files[tryPath] !== undefined) {
-              return { path: tryPath, namespace: 'virtual' };
-            }
-          }
-        }
-
-        // Absolute paths from virtual FS
-        if (args.path.startsWith('/')) {
-          const extensions = ['', '.tsx', '.ts', '.jsx', '.js', '.css', '.json'];
-          for (const ext of extensions) {
-            const tryPath = args.path + ext;
-            if (files[tryPath] !== undefined) {
-              return { path: tryPath, namespace: 'virtual' };
-            }
-          }
-        }
-
-        // External packages
-        return { path: args.path, external: true };
-      });
-
-      // Load from virtual FS
-      build.onLoad({ filter: /.*/, namespace: 'virtual' }, (args) => {
-        console.log(`[VFS] onLoad: ${args.path}`);
-        const content = files[args.path];
-        if (content === undefined) {
-          console.log(`[VFS] File not found: ${args.path}`);
-          return { errors: [{ text: `File not found in virtual FS: ${args.path}` }] };
-        }
-        console.log(`[VFS] Loaded ${args.path}: ${content.length} chars`);
-
-        // Determine loader from extension
-        const ext = args.path.split('.').pop() || 'ts';
-        const loaderMap: Record<string, esbuild.Loader> = {
-          tsx: 'tsx',
-          ts: 'ts',
-          jsx: 'jsx',
-          js: 'js',
-          css: 'css',
-          json: 'json',
-        };
-
-        return {
-          contents: content,
-          loader: loaderMap[ext] || 'ts',
-        };
-      });
-    },
-  };
+  console.log(`[Bundle] Starting bundle in ${workDir}`);
+  console.log(`[Bundle] Files: ${Object.keys(files).join(', ')}`);
+  console.log(`[Bundle] Entry: ${entry}`);
+  console.log(`[Bundle] External: ${external.join(', ')}`);
 
   try {
-    const result = await esbuild.build({
-      entryPoints: [entry],
-      bundle: true,
-      write: false,
-      outdir: '/out',
-      format,
-      platform: 'browser',
-      globalName: format === 'iife' ? 'ForgeBundle' : undefined,
-      target: 'es2020',
-      jsx: 'transform',
-      jsxFactory: 'React.createElement',
-      jsxFragment: 'React.Fragment',
-      minify,
-      sourcemap: false,
-      plugins: [virtualFSPlugin],
-      external,
-      define: {
-        'process.env.NODE_ENV': '"production"',
-      },
-      // Inject require shim for external packages loaded from CDN
-      banner: {
-        js: requireShim,
-      },
-      logLevel: 'silent',
-    });
+    // Create work directory
+    await mkdir(workDir, { recursive: true });
 
+    // Write all virtual files to temp directory
+    for (const [filePath, content] of Object.entries(files)) {
+      const fullPath = join(workDir, filePath);
+      const dir = fullPath.replace(/\/[^/]+$/, '');
+      await mkdir(dir, { recursive: true });
+      await writeFile(fullPath, content);
+      console.log(`[Bundle] Wrote ${filePath} (${content.length} bytes)`);
+    }
+
+    // Determine entry file path
+    const entryPath = join(workDir, entry);
+    console.log(`[Bundle] Entry path: ${entryPath}`);
+
+    // Bundle with Bun
+    // Debug: show where we're bundling from and where node_modules is
+    const { readdirSync, existsSync } = await import('node:fs');
+    console.log(`[Bundle] CWD: ${process.cwd()}`);
+    console.log(`[Bundle] workDir: ${workDir}`);
+    console.log(`[Bundle] /app/node_modules exists: ${existsSync('/app/node_modules')}`);
+    console.log(`[Bundle] workDir contents: ${readdirSync(workDir).join(', ')}`);
+    if (existsSync('/app/node_modules')) {
+      const pkgs = readdirSync('/app/node_modules').filter(p => p.startsWith('@react') || p === 'three');
+      console.log(`[Bundle] R3F packages in node_modules: ${pkgs.join(', ')}`);
+    }
+
+    let result;
+    try {
+      result = await Bun.build({
+        entrypoints: [entryPath],
+        outdir: join(workDir, 'out'),
+        root: '/app',
+        target: 'browser',
+        format: 'cjs',
+        naming: '[name].[ext]',
+        minify,
+        external,
+        define: {
+          'process.env.NODE_ENV': '"production"',
+        },
+        // Use classic JSX transform (React.createElement) instead of automatic (jsx-runtime)
+        // This works with React UMD builds from CDN
+        jsx: {
+          runtime: 'classic',
+          factory: 'React.createElement',
+          fragment: 'React.Fragment',
+        },
+      });
+    } catch (buildError) {
+      console.error('[Bundle] Bun.build threw exception:', buildError);
+      throw new Error(`Bun.build exception: ${buildError instanceof Error ? buildError.message : String(buildError)}`);
+    }
+
+    if (!result.success) {
+      console.error('[Bundle] Build failed, logs:', JSON.stringify(result.logs, null, 2));
+      const errors = result.logs
+        .map(log => `[${log.level}] ${log.message}`)
+        .join('\n');
+      throw new Error(`Build failed:\n${errors || 'No error details available'}`);
+    }
+
+    // Read output files
     let js = '';
     let css = '';
 
-    // Log output files for debugging
-    console.log(`[Bundle] Build complete. Errors: ${result.errors.length}, Warnings: ${result.warnings.length}`);
-    console.log(`[Bundle] Output files (${result.outputFiles?.length || 0}): ${result.outputFiles?.map(f => `${f.path} (${f.text.length} bytes)`).join(', ') || 'none'}`);
-
-    for (const file of result.outputFiles || []) {
-      // Match by extension anywhere in path
-      if (file.path.includes('.js')) {
-        js = file.text;
-      } else if (file.path.includes('.css')) {
-        css = file.text;
+    for (const output of result.outputs) {
+      const text = await output.text();
+      if (output.path.endsWith('.js')) {
+        // Don't add require shim here - bundler service adds it to HTML
+        // CJS format uses module.exports, wrap to capture it
+        js = `var module = { exports: {} }; var exports = module.exports;\n${text}\nwindow.ForgeBundle = module.exports;`;
+      } else if (output.path.endsWith('.css')) {
+        css = text;
       }
     }
 
-    const warnings = result.warnings.map((w) => `${w.location?.file || ''}:${w.location?.line || ''} ${w.text}`);
+    const warnings = result.logs
+      .filter(log => log.level === 'warning')
+      .map(log => log.message);
+
     const buildTimeMs = Date.now() - startTime;
+    console.log(`[Bundle] Complete: ${js.length} bytes JS, ${css.length} bytes CSS, ${buildTimeMs}ms`);
 
     return { js, css, warnings, buildTimeMs };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Bundle failed: ${message}`);
+  } finally {
+    // Clean up temp directory
+    try {
+      await rm(workDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
   }
 }
 
@@ -268,20 +224,16 @@ async function transpile(request: TranspileRequest): Promise<TranspileResponse> 
   const { source, loader } = request;
 
   try {
-    const result = await esbuild.transform(source, {
+    const transpiler = new Bun.Transpiler({
       loader,
-      format: 'esm',
-      target: 'es2020',
-      jsx: 'transform',
-      jsxFactory: 'React.createElement',
-      jsxFragment: 'React.Fragment',
-      minify: false,
-      sourcemap: false,
+      target: 'browser',
     });
 
+    const js = transpiler.transformSync(source);
+
     return {
-      js: result.code,
-      warnings: result.warnings.map((w) => w.text),
+      js,
+      warnings: [],
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -321,7 +273,7 @@ const server = Bun.serve({
             status: 'ok',
             service: 'forge2-bundler',
             runtime: 'bun',
-            esbuild: esbuild.version,
+            bunVersion: Bun.version,
             timestamp: new Date().toISOString(),
           },
           { headers: corsHeaders }
@@ -391,4 +343,4 @@ const server = Bun.serve({
 });
 
 console.log(`[Bundler] Server running on http://localhost:${PORT}`);
-console.log(`[Bundler] esbuild version: ${esbuild.version}`);
+console.log(`[Bundler] Bun version: ${Bun.version}`);
