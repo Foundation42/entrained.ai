@@ -157,12 +157,12 @@ export class BundlerService {
     const resolvedAssets = await this.resolveAssets(input.assets ?? []);
     console.log(`[Bundler] Resolved ${resolvedAssets.length} assets`);
 
-    // 3. Build the virtual file system
-    const files = this.buildVirtualFS(resolvedFiles);
+    // 3. Build the virtual file system (may create synthetic entry for multi-component bundles)
+    const { fs: files, syntheticEntry } = this.buildVirtualFS(resolvedFiles, input.template?.body);
 
-    // 4. Determine entry point
-    const entry = this.findEntryPoint(resolvedFiles, input.entry);
-    console.log(`[Bundler] Entry point: ${entry}`);
+    // 4. Determine entry point (prefer synthetic entry for multi-component bundles)
+    const entry = syntheticEntry ?? this.findEntryPoint(resolvedFiles, input.entry);
+    console.log(`[Bundler] Entry point: ${entry}${syntheticEntry ? ' (synthetic)' : ''}`);
 
     // 5. Call the bundler container
     const stub = this.getBundlerStub();
@@ -305,19 +305,80 @@ export class BundlerService {
 
   /**
    * Build a virtual file system for the bundler container
+   * If multiple TSX/JSX components exist, creates a synthetic entry that imports them all
    */
-  private buildVirtualFS(files: ResolvedFile[]): Record<string, string> {
+  private buildVirtualFS(files: ResolvedFile[], layout?: string): { fs: Record<string, string>; syntheticEntry?: string } {
     const fs: Record<string, string> = {};
 
+    // Add all files to the virtual FS
     for (const file of files) {
-      // Use canonical name as the file path
       const ext = file.fileType || 'ts';
       const path = `/${file.canonical_name}.${ext}`;
       fs[path] = file.content;
       console.log(`[Bundler] VFS: ${path} (${file.content.length} bytes)`);
     }
 
-    return fs;
+    // Check if we have multiple TSX/JSX components that need a synthetic entry
+    const tsxFiles = files.filter(f => f.fileType === 'tsx' || f.fileType === 'jsx');
+
+    if (tsxFiles.length > 1) {
+      // Create a synthetic entry that imports and renders all components
+      const syntheticEntry = this.createSyntheticEntry(tsxFiles, layout);
+      fs['/_forge_app.tsx'] = syntheticEntry;
+      console.log(`[Bundler] VFS: /_forge_app.tsx (synthetic entry, ${syntheticEntry.length} bytes)`);
+      return { fs, syntheticEntry: '/_forge_app.tsx' };
+    }
+
+    return { fs };
+  }
+
+  /**
+   * Create a synthetic entry file that imports and renders multiple components
+   */
+  private createSyntheticEntry(components: ResolvedFile[], layout?: string): string {
+    // Generate import statements and component name mappings
+    const imports: string[] = ['import React from "react";'];
+    const componentMap: Array<{ name: string; path: string; canonical: string }> = [];
+
+    for (const comp of components) {
+      // Convert canonical name to PascalCase for component name
+      const compName = comp.canonical_name
+        .split(/[-_]/)
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+      const path = `./${comp.canonical_name}.${comp.fileType}`;
+      imports.push(`import ${compName} from "${path}";`);
+      componentMap.push({ name: compName, path, canonical: comp.canonical_name });
+    }
+
+    // Generate the App component
+    let appBody: string;
+
+    if (layout) {
+      // If layout provided, try to parse it and render components
+      // For now, just render all components in order (layout parsing is complex)
+      appBody = componentMap
+        .map(c => `    <${c.name} />`)
+        .join('\n');
+    } else {
+      // Default: render all components stacked
+      appBody = componentMap
+        .map(c => `    <${c.name} />`)
+        .join('\n');
+    }
+
+    return `${imports.join('\n')}
+
+const ForgeApp = () => {
+  return (
+    <div className="forge-app">
+${appBody}
+    </div>
+  );
+};
+
+export default ForgeApp;
+`;
   }
 
   /**
