@@ -307,9 +307,10 @@ app.post('/create', async (c) => {
         );
         console.log(`[ForgeAPI] CSS generated: ${cssResult.content.length} bytes`);
 
-        // Store CSS as asset linked to the component
+        // Store CSS as asset linked to the component (truncate name to avoid ID length issues)
+        const cssBaseName = (result.canonical_name || 'component').slice(0, 40);
         cssManifest = await service.create({
-          name: `${result.canonical_name || 'component'}-styles`,
+          name: `${cssBaseName}-css`,
           type: 'file',
           file_type: 'css',
           description: `Styles for: ${description}`,
@@ -343,6 +344,58 @@ app.post('/create', async (c) => {
       console.log(`[ForgeAPI] No css_classes to generate CSS for`);
     }
 
+    // Auto-generate preview bundle (component + CSS + demo_props)
+    let previewUrl: string | undefined;
+    try {
+      console.log(`[ForgeAPI] Generating preview bundle...`);
+      const bundler = new BundlerService(c.env, baseUrl);
+
+      // Build list of files to bundle (TSX + CSS if available)
+      const filesToBundle = [manifest.id];
+      if (cssManifest) {
+        filesToBundle.push(cssManifest.id);
+      }
+
+      // Truncate name to avoid ID length issues
+      const bundleName = (result.canonical_name || 'component').slice(0, 40);
+      const bundleResult = await bundler.bundle({
+        name: `${bundleName}-demo`,
+        description: `Preview: ${description}`,
+        files: filesToBundle,
+      });
+
+      // Store the preview bundle (truncate name to avoid exceeding 64 byte ID limit)
+      const baseName = (result.canonical_name || 'component').slice(0, 40);
+      const previewManifest = await service.create({
+        name: `${baseName}-demo`,
+        type: 'bundle',
+        description: `Preview: ${description}`,
+        content: bundleResult.html,
+        mime_type: 'text/html',
+        provenance: {
+          source_type: 'ai_generated',
+          generation_params: {
+            component_id: manifest.id,
+            css_id: cssManifest?.id,
+            bundle_type: 'preview',
+          },
+        },
+        metadata: {
+          component_id: manifest.id,
+          css_id: cssManifest?.id,
+          build_time_ms: bundleResult.buildTimeMs,
+        },
+      });
+
+      previewUrl = previewManifest.content_url;
+      console.log(`[ForgeAPI] Preview created: ${previewManifest.id}`);
+    } catch (previewError) {
+      // Preview generation failed, but component was created successfully
+      const errMsg = previewError instanceof Error ? previewError.message : String(previewError);
+      console.error('[ForgeAPI] Preview generation failed:', errMsg);
+      // Continue without preview
+    }
+
     return c.json({
       id: manifest.id,
       name: manifest.canonical_name,
@@ -350,6 +403,8 @@ app.post('/create', async (c) => {
       description,
       source_url: `${baseUrl}/api/forge/${manifest.id}/source`,
       content_url: manifest.content_url,
+      // NEW: preview_url with rendered component + styles + demo_props
+      preview_url: previewUrl,
       props: result.props,
       css_classes: result.css_classes,
       // Include CSS info if generated
