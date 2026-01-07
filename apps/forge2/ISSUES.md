@@ -31,10 +31,13 @@ Collected from Claude Chat testing session (2026-01-07)
 - **Impact**: Makes compositions less flexible and reusable
 - **Fix**: Support prop binding syntax in layout, e.g. `<Component :prop="value" />`
 
-### 5. Tool Descriptions Don't Explain Workflow
+### ~~5. Tool Descriptions Don't Explain Workflow~~ ✅ FIXED
 - **Issue**: Not clear that compose is required for viewable output
-- **Impact**: Confusion about when to use each tool
-- **Fix**: Update MCP tool descriptions to clarify workflow
+- **Status**: FIXED - Tool descriptions now explain workflow clearly:
+  - forge_create explains it returns preview_url (no compose needed for single components)
+  - forge_compose clarifies it's for MULTIPLE components only
+  - forge_about emphasizes calling it first
+- **Commit**: 9eb6d5f
 
 ### 6. Transparent PNG Generation Errors
 - **Issue**: `forge_create_image` with `preset: "icon"` and `transparent: true` can return 500 error
@@ -130,6 +133,7 @@ Collected from Claude Chat testing session (2026-01-07)
 
 ## Recently Fixed
 
+- **Tool descriptions** - MCP tool descriptions now explain workflow clearly (9eb6d5f)
 - **Auto-preview URL** - `forge_create` now returns `preview_url` with rendered component + CSS + demo_props (8adfc9d)
 - **Auto-generate CSS** - `forge_create` now generates matching CSS for component's css_classes (f66d03a)
 - **Missing React imports** - Post-generation validation now fixes missing useState/useEffect/useRef imports (023345e)
