@@ -397,6 +397,8 @@ app.post('/app', async (c) => {
           role: c.role,
           description: c.description,
         })),
+        images: result.plan.images,
+        speech: result.plan.speech,
         style: result.plan.style,
         layout: result.plan.layout,
       },
@@ -409,11 +411,23 @@ app.post('/app', async (c) => {
           tsx_id: c.tsxId,
           css_id: c.cssId,
         })),
+        images: result.images.map(i => ({
+          id: i.id,
+          url: i.url,
+          prompt: (i.plan as { prompt: string }).prompt,
+        })),
+        speech: result.speech.map(s => ({
+          id: s.id,
+          url: s.url,
+          text: (s.plan as { text: string }).text.slice(0, 100) + '...',
+        })),
       },
 
       // Stats
       stats: {
         component_count: result.components.length,
+        image_count: result.images.length,
+        speech_count: result.speech.length,
         total_css_classes: result.components.reduce(
           (sum, c) => sum + (c.tsx.css_classes?.length || 0),
           0

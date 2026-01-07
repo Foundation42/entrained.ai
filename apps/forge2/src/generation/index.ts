@@ -35,4 +35,4 @@ export { generateCompletion } from './llm';
 export type { LLMProvider, LLMMessage, LLMResponse, LLMOptions } from './llm';
 
 export { planApp, generateApp } from './apps';
-export type { AppPlan, ComponentPlan, GeneratedComponent, GeneratedApp } from './apps';
+export type { AppPlan, ComponentPlan, ImageAssetPlan, SpeechAssetPlan, GeneratedComponent, GeneratedAsset, GeneratedApp } from './apps';

@@ -153,13 +153,23 @@ async function testGenerateApp() {
 
   const startTime = Date.now();
 
+  // Check if we should test multimedia
+  const isMultimedia = process.argv.includes('--multimedia');
+
+  const request = isMultimedia ? {
+    description: 'Interactive story card about a robot learning to paint',
+    style: 'whimsical storybook with soft colors and rounded corners'
+  } : {
+    description: 'Landing page with hero section, features grid, and call-to-action',
+    style: 'glassmorphic with purple accents'
+  };
+
+  console.log(`Request: ${request.description}\n`);
+
   const response = await fetch(`${BASE_URL}/api/generate/app`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      description: 'Landing page with hero section, features grid, and call-to-action',
-      style: 'glassmorphic with purple accents'
-    })
+    body: JSON.stringify(request)
   });
 
   const result = await response.json() as {
@@ -169,14 +179,18 @@ async function testGenerateApp() {
     preview_url?: string;
     plan?: {
       components: Array<{ name: string; role: string; description: string }>;
+      images: Array<{ id: string; prompt: string; style: string; used_by: string }>;
+      speech: Array<{ id: string; text: string; voice_style: string; used_by: string }>;
       style: string;
       layout: string;
     };
     assets?: {
       app_wrapper: string;
       components: Array<{ name: string; tsx_id: string; css_id: string }>;
+      images: Array<{ id: string; url: string; prompt: string }>;
+      speech: Array<{ id: string; url: string; text: string }>;
     };
-    stats?: { component_count: number; total_css_classes: number };
+    stats?: { component_count: number; image_count: number; speech_count: number; total_css_classes: number };
     error?: string;
   };
 
@@ -203,14 +217,35 @@ async function testGenerateApp() {
 
   console.log('\n--- Assets Generated ---');
   console.log('App Wrapper:', result.assets?.app_wrapper);
+  console.log('\nComponents:');
   result.assets?.components.forEach(c => {
     console.log(`  ${c.name}:`);
     console.log(`    TSX: ${c.tsx_id}`);
     console.log(`    CSS: ${c.css_id}`);
   });
 
+  if (result.assets?.images && result.assets.images.length > 0) {
+    console.log('\nImages:');
+    result.assets.images.forEach(i => {
+      console.log(`  ${i.id}:`);
+      console.log(`    URL: ${i.url}`);
+      console.log(`    Prompt: ${i.prompt.slice(0, 80)}...`);
+    });
+  }
+
+  if (result.assets?.speech && result.assets.speech.length > 0) {
+    console.log('\nSpeech:');
+    result.assets.speech.forEach(s => {
+      console.log(`  ${s.id}:`);
+      console.log(`    URL: ${s.url}`);
+      console.log(`    Text: ${s.text}`);
+    });
+  }
+
   console.log('\n--- Stats ---');
   console.log('Components:', result.stats?.component_count);
+  console.log('Images:', result.stats?.image_count);
+  console.log('Speech clips:', result.stats?.speech_count);
   console.log('Total CSS Classes:', result.stats?.total_css_classes);
 
   return result;

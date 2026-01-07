@@ -9,6 +9,8 @@
 import type { Env } from '../types';
 import { generateCompletion, type LLMMessage, type LLMOptions } from './llm';
 import { generateFile, generateCssForComponent, type GeneratedFile } from './files';
+import { generateImage } from './images';
+import { generateSpeech } from './speech';
 import { AssetService } from '../services/assets';
 import { BundlerService } from '../services/bundler';
 
@@ -26,11 +28,45 @@ export interface AppPlan {
   /** Components to generate */
   components: ComponentPlan[];
 
+  /** Images to generate */
+  images: ImageAssetPlan[];
+
+  /** Speech/audio to generate */
+  speech: SpeechAssetPlan[];
+
   /** Overall style/theme */
   style: string;
 
   /** Layout structure for the App wrapper */
   layout: string;
+}
+
+export interface ImageAssetPlan {
+  /** Identifier to reference this image (e.g., "hero-image", "robot-illustration") */
+  id: string;
+
+  /** Prompt for image generation */
+  prompt: string;
+
+  /** Image style */
+  style: 'illustration' | 'photo' | '3d' | 'pixel-art';
+
+  /** Which component uses this image */
+  used_by: string;
+}
+
+export interface SpeechAssetPlan {
+  /** Identifier to reference this audio (e.g., "narration", "welcome-message") */
+  id: string;
+
+  /** Text to convert to speech */
+  text: string;
+
+  /** Voice style hints */
+  voice_style: string;
+
+  /** Which component uses this audio */
+  used_by: string;
 }
 
 export interface ComponentPlan {
@@ -64,12 +100,32 @@ export interface GeneratedComponent {
   cssId: string;
 }
 
+export interface GeneratedAsset {
+  /** Plan for this asset */
+  plan: ImageAssetPlan | SpeechAssetPlan;
+
+  /** Asset ID */
+  id: string;
+
+  /** URL to access the asset */
+  url: string;
+
+  /** Asset type */
+  type: 'image' | 'speech';
+}
+
 export interface GeneratedApp {
   /** The app plan */
   plan: AppPlan;
 
   /** Generated components */
   components: GeneratedComponent[];
+
+  /** Generated image assets */
+  images: GeneratedAsset[];
+
+  /** Generated speech assets */
+  speech: GeneratedAsset[];
 
   /** App wrapper TSX */
   appWrapper: GeneratedFile;
@@ -88,7 +144,7 @@ export interface GeneratedApp {
 // App Planning
 // =============================================================================
 
-const PLANNER_SYSTEM_PROMPT = `You are an expert UI/UX architect. Given an app description, create a detailed plan for the components needed.
+const PLANNER_SYSTEM_PROMPT = `You are an expert UI/UX architect. Given an app description, create a detailed plan for the components, images, and audio needed.
 
 Rules:
 - Break the app into logical, reusable components
@@ -96,6 +152,8 @@ Rules:
 - Include 2-6 components depending on complexity
 - Consider the visual hierarchy and layout
 - Include appropriate props for customization
+- Plan images that would enhance the visual appeal
+- Plan speech/audio if the app would benefit from narration or sound
 
 Output a JSON object with these keys:
 1. "name": A slug-friendly name for the app (lowercase, hyphens)
@@ -103,22 +161,36 @@ Output a JSON object with these keys:
 3. "components": Array of component plans, each with:
    - "name": PascalCase component name (e.g., "HeroSection")
    - "description": What this component does and looks like
-   - "props": Array of prop names it should accept
+   - "props": Array of prop names it should accept (include imageUrl/audioUrl props if this component uses assets)
    - "role": One of "header", "hero", "section", "feature", "cta", "footer", "navigation", "card", "other"
-4. "style": Style description to pass to CSS generation
-5. "layout": How components should be arranged (e.g., "vertical stack", "hero then features grid then cta")
+4. "images": Array of images to generate, each with:
+   - "id": kebab-case identifier (e.g., "hero-illustration")
+   - "prompt": Detailed prompt for AI image generation
+   - "style": One of "illustration", "photo", "3d", "pixel-art"
+   - "used_by": Component name that will use this image
+5. "speech": Array of audio to generate, each with:
+   - "id": kebab-case identifier (e.g., "story-narration")
+   - "text": The text to convert to speech
+   - "voice_style": Description of how it should sound (e.g., "warm and friendly narrator")
+   - "used_by": Component name that will use this audio
+6. "style": Style description to pass to CSS generation
+7. "layout": How components should be arranged
 
-Example:
+Example for a story card:
 {
-  "name": "product-landing",
-  "description": "A product landing page with hero, features, and call-to-action",
+  "name": "robot-story-card",
+  "description": "An interactive story card about a robot learning to paint",
   "components": [
-    {"name": "HeroSection", "description": "Full-width hero with headline, subtext, and CTA button", "props": ["headline", "subtext", "ctaText", "ctaLink"], "role": "hero"},
-    {"name": "FeatureCard", "description": "Card showing a feature with icon, title, and description", "props": ["icon", "title", "description"], "role": "feature"},
-    {"name": "CTABanner", "description": "Call-to-action banner with gradient background", "props": ["title", "buttonText", "buttonLink"], "role": "cta"}
+    {"name": "StoryCard", "description": "Card with illustration, title, story text, and play button for narration", "props": ["title", "story", "imageUrl", "audioUrl"], "role": "card"}
   ],
-  "style": "modern SaaS with gradients and subtle shadows",
-  "layout": "vertical stack: hero at top, 3-column feature grid in middle, CTA banner at bottom"
+  "images": [
+    {"id": "robot-painting", "prompt": "A cute robot with paintbrush in hand, standing at an easel, watercolor style, whimsical, warm colors", "style": "illustration", "used_by": "StoryCard"}
+  ],
+  "speech": [
+    {"id": "story-narration", "text": "Once upon a time, there was a little robot who dreamed of becoming an artist...", "voice_style": "warm, gentle storyteller voice", "used_by": "StoryCard"}
+  ],
+  "style": "whimsical storybook aesthetic with soft shadows and rounded corners",
+  "layout": "single centered card with image at top, text below, audio controls at bottom"
 }
 
 Output ONLY valid JSON. No markdown fences, no explanations.`;
@@ -153,8 +225,14 @@ ${style ? `\nDesired style: ${style}` : ''}`;
   content = content.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '');
 
   try {
-    const plan = JSON.parse(content) as AppPlan;
-    console.log(`[AppGen] Plan: ${plan.name} with ${plan.components.length} components`);
+    const parsed = JSON.parse(content);
+    // Ensure arrays exist (backward compatibility)
+    const plan: AppPlan = {
+      ...parsed,
+      images: parsed.images || [],
+      speech: parsed.speech || [],
+    };
+    console.log(`[AppGen] Plan: ${plan.name} with ${plan.components.length} components, ${plan.images.length} images, ${plan.speech.length} audio`);
     return plan;
   } catch (error) {
     console.error('[AppGen] Failed to parse plan:', content);
@@ -285,9 +363,111 @@ export async function generateApp(
     });
   }
 
-  // 3. Generate App wrapper
-  console.log('[AppGen] Step 3: Generating App wrapper...');
-  const appWrapper = await generateAppWrapper(plan, generatedComponents, env);
+  // 3. Generate images (if any)
+  const generatedImages: GeneratedAsset[] = [];
+  if (plan.images.length > 0) {
+    console.log(`[AppGen] Step 3a: Generating ${plan.images.length} images...`);
+    for (const imagePlan of plan.images) {
+      console.log(`[AppGen] Generating image: ${imagePlan.id}`);
+      try {
+        const imageResult = await generateImage(
+          imagePlan.prompt,
+          { style: imagePlan.style, width: 512, height: 512 },
+          env
+        );
+
+        const imageManifest = await assetService.create({
+          name: `${plan.name}-${imagePlan.id}`,
+          type: 'asset',
+          media_type: 'image',
+          description: imagePlan.prompt,
+          content: imageResult.data,
+          mime_type: imageResult.mimeType,
+          provenance: {
+            ai_model: env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-exp',
+            ai_provider: 'gemini',
+            source_type: 'ai_generated',
+            generation_params: { prompt: imagePlan.prompt, style: imagePlan.style },
+          },
+          metadata: {
+            app_name: plan.name,
+            used_by: imagePlan.used_by,
+            width: imageResult.width,
+            height: imageResult.height,
+          },
+        });
+
+        generatedImages.push({
+          plan: imagePlan,
+          id: imageManifest.id,
+          url: imageManifest.content_url,
+          type: 'image',
+        });
+      } catch (error) {
+        console.error(`[AppGen] Failed to generate image ${imagePlan.id}:`, error);
+        // Continue without this image
+      }
+    }
+  }
+
+  // 3b. Generate speech (if any)
+  const generatedSpeech: GeneratedAsset[] = [];
+  if (plan.speech.length > 0) {
+    console.log(`[AppGen] Step 3b: Generating ${plan.speech.length} audio clips...`);
+    for (const speechPlan of plan.speech) {
+      console.log(`[AppGen] Generating speech: ${speechPlan.id}`);
+      try {
+        const speechResult = await generateSpeech(
+          speechPlan.text,
+          { voice: 'nova', format: 'mp3' },
+          env
+        );
+
+        const speechManifest = await assetService.create({
+          name: `${plan.name}-${speechPlan.id}`,
+          type: 'asset',
+          media_type: 'speech',
+          description: speechPlan.text.slice(0, 200),
+          content: speechResult.data,
+          mime_type: speechResult.mimeType,
+          provenance: {
+            ai_model: 'gpt-4o-mini-tts',
+            ai_provider: 'openai',
+            source_type: 'ai_generated',
+            generation_params: { text: speechPlan.text, voice_style: speechPlan.voice_style },
+          },
+          metadata: {
+            app_name: plan.name,
+            used_by: speechPlan.used_by,
+            text_length: speechPlan.text.length,
+          },
+        });
+
+        generatedSpeech.push({
+          plan: speechPlan,
+          id: speechManifest.id,
+          url: speechManifest.content_url,
+          type: 'speech',
+        });
+      } catch (error) {
+        console.error(`[AppGen] Failed to generate speech ${speechPlan.id}:`, error);
+        // Continue without this audio
+      }
+    }
+  }
+
+  // Build asset URL map for components to use
+  const assetUrls: Record<string, string> = {};
+  for (const img of generatedImages) {
+    assetUrls[(img.plan as ImageAssetPlan).id] = img.url;
+  }
+  for (const speech of generatedSpeech) {
+    assetUrls[(speech.plan as SpeechAssetPlan).id] = speech.url;
+  }
+
+  // 4. Generate App wrapper
+  console.log('[AppGen] Step 4: Generating App wrapper...');
+  const appWrapper = await generateAppWrapper(plan, generatedComponents, assetUrls, env);
 
   const appWrapperManifest = await assetService.create({
     name: `${plan.name}-app`,
@@ -349,10 +529,17 @@ export async function generateApp(
     fileIds.push(appCssId);
   }
 
+  // Collect asset IDs for the bundle
+  const assetIds = [
+    ...generatedImages.map(i => i.id),
+    ...generatedSpeech.map(s => s.id),
+  ];
+
   const bundleResult = await bundlerService.bundle({
     name: plan.name,
     description: plan.description,
     files: fileIds,
+    assets: assetIds,
     entry: appWrapperManifest.id,
   });
 
@@ -389,6 +576,8 @@ export async function generateApp(
   return {
     plan,
     components: generatedComponents,
+    images: generatedImages,
+    speech: generatedSpeech,
     appWrapper,
     appWrapperId: appWrapperManifest.id,
     bundleId: bundleManifest.id,
@@ -406,6 +595,7 @@ export async function generateApp(
 async function generateAppWrapper(
   plan: AppPlan,
   components: GeneratedComponent[],
+  assetUrls: Record<string, string>,
   env: Env
 ): Promise<GeneratedFile> {
   const componentList = components.map(c => ({
@@ -415,6 +605,25 @@ async function generateAppWrapper(
     demoProps: c.tsx.demo_props,
   }));
 
+  // Build asset props for each component based on the plan
+  const componentAssets: Record<string, Record<string, string>> = {};
+  for (const img of plan.images) {
+    const url = assetUrls[img.id];
+    if (url) {
+      const existing = componentAssets[img.used_by] ?? {};
+      existing.imageUrl = url;
+      componentAssets[img.used_by] = existing;
+    }
+  }
+  for (const speech of plan.speech) {
+    const url = assetUrls[speech.id];
+    if (url) {
+      const existing = componentAssets[speech.used_by] ?? {};
+      existing.audioUrl = url;
+      componentAssets[speech.used_by] = existing;
+    }
+  }
+
   const systemPrompt = `You are an expert React developer. Generate an App wrapper component that imports and uses the given components.
 
 Rules:
@@ -423,6 +632,7 @@ Rules:
 - The component names in imports should be lowercase with hyphens matching the file names
 - Arrange components according to the layout description
 - Pass appropriate demo props to each component
+- If asset URLs are provided (imageUrl, audioUrl), pass them to the appropriate components
 - Include a container div with app-level styling classes
 - Use semantic CSS class names for the layout
 
@@ -444,6 +654,9 @@ ${componentList.map(c => `- ${c.name} (role: ${c.role}, props: ${c.props.join(',
 
 Demo props for each component:
 ${componentList.map(c => `- ${c.name}: ${JSON.stringify(c.demoProps || {})}`).join('\n')}
+
+Asset URLs to pass to components:
+${Object.entries(componentAssets).map(([comp, urls]) => `- ${comp}: ${JSON.stringify(urls)}`).join('\n') || '(none)'}
 
 The file names for imports are:
 ${components.map(c => `- ${c.plan.name}: ./${plan.name}-${c.plan.name.toLowerCase()}`).join('\n')}`;
