@@ -23,3 +23,4 @@ EXPOSE 8080
 
 # Run the server
 CMD ["bun", "run", "server.ts"]
+# Rebuild trigger $(date)

@@ -705,12 +705,13 @@ export default ForgeApp;
 
     // Build CDN script tags for detected libraries
     const cdnScripts: string[] = [];
-    // Note: For libraries with named exports (import { x } from 'lib'), we return an object
-    // with both default and named exports for compatibility with esbuild's output
+    // Note: For libraries with named exports (import { x } from 'lib'), we spread all
+    // library properties so named imports like useState, useRef, gsap.to() work correctly
+    const spreadLib = 'if (!m) return {}; if (m.__esModule) return m; var r = { default: m, __esModule: true }; for (var k in m) r[k] = m[k]; return r;';
     const requireShimEntries: string[] = [
-      'if (name === "react") { var m = window.React; return m && m.__esModule ? m : { default: m, React: m }; }',
-      'if (name === "react-dom") { var m = window.ReactDOM; return m && m.__esModule ? m : { default: m, ReactDOM: m }; }',
-      'if (name === "react-dom/client") { var m = window.ReactDOM; return m && m.__esModule ? m : { default: m, ReactDOM: m }; }',
+      `if (name === "react") { var m = window.React; ${spreadLib} }`,
+      `if (name === "react-dom") { var m = window.ReactDOM; ${spreadLib} }`,
+      `if (name === "react-dom/client") { var m = window.ReactDOM; ${spreadLib} }`,
     ];
 
     for (const libName of cdnLibraries) {
@@ -720,9 +721,8 @@ export default ForgeApp;
         for (const url of lib.cdnUrls) {
           cdnScripts.push(`  <script crossorigin src="${url}"></script>`);
         }
-        // Add entry to require shim with both default and named exports
-        const globalLower = lib.globalName.toLowerCase();
-        requireShimEntries.push(`if (name === "${libName}") { var m = window.${lib.globalName}; return m && m.__esModule ? m : { default: m, ${globalLower}: m, ${lib.globalName}: m }; }`);
+        // Add entry to require shim that spreads all library properties for named imports
+        requireShimEntries.push(`if (name === "${libName}") { var m = window.${lib.globalName}; ${spreadLib} }`);
         // Handle subpath imports (e.g., 'three/examples/jsm/...')
         requireShimEntries.push(`if (name.startsWith("${libName}/")) return window.${lib.globalName};`);
       }

@@ -93,12 +93,12 @@ async function bundle(request: BundleRequest): Promise<BundleResponse> {
 
   // Build require shim entries
   // For libraries that use named exports (import { x } from 'lib'), we need to return
-  // an object that has both the default export AND a named export matching the global.
-  // e.g., gsap: { default: window.gsap, gsap: window.gsap }
+  // an object that has the default export AND all named exports from the library.
+  // We spread the library object to include all its properties (useState, useRef, etc.)
   const requireEntries = Object.entries(allGlobals)
     .map(([pkg, global]) => {
-      // Return object with both default and named export for compatibility
-      return `if (name === "${pkg}") { var m = window.${global}; return m && m.__esModule ? m : { default: m, ${global.toLowerCase()}: m, ${global}: m }; }`;
+      // Return object with default export + spread all library properties for named imports
+      return `if (name === "${pkg}") { var m = window.${global}; if (!m) return {}; if (m.__esModule) return m; var r = { default: m, __esModule: true }; for (var k in m) r[k] = m[k]; return r; }`;
     })
     .join(' ');
 
