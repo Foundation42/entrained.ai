@@ -147,6 +147,75 @@ async function testCssForComponent() {
   return { component, css, composed };
 }
 
+async function testGenerateApp() {
+  console.log('=== Testing Multi-Component App Generation ===\n');
+  console.log('This is the ultimate Forge 2.0 showcase: idea -> deployed page in one request!\n');
+
+  const startTime = Date.now();
+
+  const response = await fetch(`${BASE_URL}/api/generate/app`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      description: 'Landing page with hero section, features grid, and call-to-action',
+      style: 'glassmorphic with purple accents'
+    })
+  });
+
+  const result = await response.json() as {
+    id?: string;
+    name?: string;
+    description?: string;
+    preview_url?: string;
+    plan?: {
+      components: Array<{ name: string; role: string; description: string }>;
+      style: string;
+      layout: string;
+    };
+    assets?: {
+      app_wrapper: string;
+      components: Array<{ name: string; tsx_id: string; css_id: string }>;
+    };
+    stats?: { component_count: number; total_css_classes: number };
+    error?: string;
+  };
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+  if (result.error) {
+    console.error('Error:', result.error);
+    return;
+  }
+
+  console.log(`Generated in ${elapsed}s!\n`);
+  console.log('App:', result.name);
+  console.log('Description:', result.description);
+  console.log('Bundle ID:', result.id);
+  console.log('\nPreview URL:', result.preview_url);
+
+  console.log('\n--- Plan ---');
+  console.log('Style:', result.plan?.style);
+  console.log('Layout:', result.plan?.layout);
+  console.log('\nComponents:');
+  result.plan?.components.forEach((c, i) => {
+    console.log(`  ${i + 1}. ${c.name} (${c.role}): ${c.description}`);
+  });
+
+  console.log('\n--- Assets Generated ---');
+  console.log('App Wrapper:', result.assets?.app_wrapper);
+  result.assets?.components.forEach(c => {
+    console.log(`  ${c.name}:`);
+    console.log(`    TSX: ${c.tsx_id}`);
+    console.log(`    CSS: ${c.css_id}`);
+  });
+
+  console.log('\n--- Stats ---');
+  console.log('Components:', result.stats?.component_count);
+  console.log('Total CSS Classes:', result.stats?.total_css_classes);
+
+  return result;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const test = args[0] || 'speech';
@@ -164,8 +233,11 @@ async function main() {
     case 'css-for-component':
       await testCssForComponent();
       break;
+    case 'app':
+      await testGenerateApp();
+      break;
     default:
-      console.log('Usage: npx tsx test-api.ts [speech|image|compose|css-for-component] [args]');
+      console.log('Usage: npx tsx test-api.ts [speech|image|compose|css-for-component|app] [args]');
   }
 }
 

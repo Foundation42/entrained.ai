@@ -17,6 +17,7 @@ import {
   speechRequestToOptions,
   generateFile,
   generateCssForComponent,
+  generateApp,
   hashFileRequest,
   fileRequestToHints,
   getMimeType,
@@ -350,6 +351,80 @@ app.get('/voices', (c) => {
  */
 app.get('/formats', (c) => {
   return c.json({ formats: AVAILABLE_FORMATS });
+});
+
+/**
+ * POST /api/generate/app
+ * Generate a complete multi-component app from a description
+ *
+ * This is the ultimate Forge 2.0 showcase: from idea to deployed page in one request.
+ * AI orchestrates the entire flow:
+ * 1. Plans what components are needed
+ * 2. Generates each component (TSX + CSS)
+ * 3. Generates App wrapper
+ * 4. Composes everything into a bundle
+ * 5. Returns deployed URL
+ */
+app.post('/app', async (c) => {
+  const body = await c.req.json() as {
+    description: string;
+    style?: string;
+  };
+  const { description, style } = body;
+
+  if (!description) {
+    return c.json({ error: 'description is required' }, 400);
+  }
+
+  const baseUrl = new URL(c.req.url).origin;
+
+  try {
+    console.log(`[AppGen] Starting app generation: ${description.slice(0, 100)}...`);
+
+    const result = await generateApp(description, style, c.env, baseUrl);
+
+    return c.json({
+      // App info
+      id: result.bundleId,
+      name: result.plan.name,
+      description: result.plan.description,
+      preview_url: result.previewUrl,
+
+      // Plan details
+      plan: {
+        components: result.plan.components.map(c => ({
+          name: c.name,
+          role: c.role,
+          description: c.description,
+        })),
+        style: result.plan.style,
+        layout: result.plan.layout,
+      },
+
+      // Generated assets
+      assets: {
+        app_wrapper: result.appWrapperId,
+        components: result.components.map(c => ({
+          name: c.plan.name,
+          tsx_id: c.tsxId,
+          css_id: c.cssId,
+        })),
+      },
+
+      // Stats
+      stats: {
+        component_count: result.components.length,
+        total_css_classes: result.components.reduce(
+          (sum, c) => sum + (c.tsx.css_classes?.length || 0),
+          0
+        ),
+      },
+    }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[AppGen] Error:', message);
+    return c.json({ error: message }, 500);
+  }
 });
 
 export default app;
