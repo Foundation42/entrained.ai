@@ -625,7 +625,7 @@ app.post('/assets/image', async (c) => {
   const service = new AssetService(c.env, baseUrl);
 
   try {
-    const imageOptions = imageRequestToOptions({ prompt, ...options });
+    const imageOptions = imageRequestToOptions({ prompt, options });
     const result = await generateImage(prompt, imageOptions, c.env);
 
     const manifest = await service.create({
