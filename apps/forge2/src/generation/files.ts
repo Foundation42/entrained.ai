@@ -377,10 +377,49 @@ Output the complete updated code.`;
 
   const response = await generateCompletion(messages, options, env);
 
-  let content = response.content.trim();
-  content = stripMarkdownFences(content);
+  let rawContent = response.content.trim();
+  rawContent = stripMarkdownFences(rawContent);
 
   const canonical_name = descriptionToCanonicalName(changeDescription);
+
+  // Parse structured output for TSX/CSS (same as generateFile)
+  let content = rawContent;
+  let demo_props: Record<string, unknown> | undefined;
+  let props: Array<{ name: string; type: string; required: boolean; default: unknown }> | undefined;
+  let css_classes: string[] | undefined;
+  let exports: string[] | undefined;
+  let classes_defined: string[] | undefined;
+  let variables_defined: string[] | undefined;
+  let keyframes_defined: string[] | undefined;
+
+  if (fileType === 'tsx' || fileType === 'jsx') {
+    try {
+      const parsed = JSON.parse(rawContent);
+      content = parsed.code || rawContent;
+      demo_props = parsed.demo_props;
+      props = parsed.props;
+      css_classes = parsed.css_classes;
+      exports = parsed.exports;
+      console.log(`[FileGen] Parsed updated TSX - props: ${props?.length || 0}, css_classes: ${css_classes?.length || 0}`);
+    } catch {
+      console.warn(`[FileGen] Failed to parse updated TSX JSON, using raw content`);
+      content = rawContent;
+    }
+  } else if (fileType === 'css') {
+    try {
+      const parsed = JSON.parse(rawContent);
+      content = parsed.code || rawContent;
+      classes_defined = parsed.classes;
+      variables_defined = parsed.variables;
+      keyframes_defined = parsed.keyframes;
+      console.log(`[FileGen] Parsed updated CSS - classes: ${classes_defined?.length || 0}`);
+    } catch {
+      console.warn(`[FileGen] Failed to parse updated CSS JSON, using raw content`);
+      content = rawContent;
+    }
+  }
+
+  console.log(`[FileGen] Updated ${content.length} chars`);
 
   return {
     content,
@@ -388,6 +427,13 @@ Output the complete updated code.`;
     file_type: fileType,
     model: response.model,
     provider: response.provider,
+    demo_props,
+    props,
+    css_classes,
+    exports,
+    classes_defined,
+    variables_defined,
+    keyframes_defined,
   };
 }
 
