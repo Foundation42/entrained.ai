@@ -308,6 +308,8 @@ export async function generateFile(
       console.warn(`[FileGen] Failed to parse TSX JSON, using raw content`);
       content = rawContent;
     }
+    // Fix any missing React imports (hooks, etc.)
+    content = fixReactImports(content);
   } else if (fileType === 'css') {
     try {
       const parsed = JSON.parse(rawContent);
@@ -405,6 +407,8 @@ Output the complete updated code.`;
       console.warn(`[FileGen] Failed to parse updated TSX JSON, using raw content`);
       content = rawContent;
     }
+    // Fix any missing React imports (hooks, etc.)
+    content = fixReactImports(content);
   } else if (fileType === 'css') {
     try {
       const parsed = JSON.parse(rawContent);
@@ -435,6 +439,113 @@ Output the complete updated code.`;
     variables_defined,
     keyframes_defined,
   };
+}
+
+// =============================================================================
+// React Import Validation & Fixing
+// =============================================================================
+
+/** All React hooks that need to be imported */
+const REACT_HOOKS = [
+  'useState',
+  'useEffect',
+  'useRef',
+  'useMemo',
+  'useCallback',
+  'useContext',
+  'useReducer',
+  'useLayoutEffect',
+  'useImperativeHandle',
+  'useDebugValue',
+  'useId',
+  'useTransition',
+  'useDeferredValue',
+  'useSyncExternalStore',
+  'useInsertionEffect',
+];
+
+/** Other React exports that might be used */
+const REACT_EXPORTS = [
+  'Fragment',
+  'Suspense',
+  'lazy',
+  'memo',
+  'forwardRef',
+  'createContext',
+  'createRef',
+  'Children',
+  'cloneElement',
+  'isValidElement',
+  'createElement',
+];
+
+/**
+ * Fix missing React imports in generated TSX/JSX code
+ * Detects used hooks and ensures they're imported
+ */
+function fixReactImports(code: string): string {
+  // Find all React hooks used in the code (look for hook calls like useState(...) or useRef<...>)
+  const usedHooks = REACT_HOOKS.filter(hook => {
+    // Match hook usage: useState( or useState< or useState\n or as a word boundary
+    const pattern = new RegExp(`\\b${hook}\\s*[<(]`, 'g');
+    return pattern.test(code);
+  });
+
+  // Find other React exports used
+  const usedExports = REACT_EXPORTS.filter(exp => {
+    const pattern = new RegExp(`\\b${exp}\\b`, 'g');
+    return pattern.test(code);
+  });
+
+  if (usedHooks.length === 0 && usedExports.length === 0) {
+    return code; // No React imports needed beyond default
+  }
+
+  // Parse existing imports
+  const importRegex = /^import\s+(?:(\w+)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s*['"]react['"]\s*;?\s*$/gm;
+  const matches = [...code.matchAll(importRegex)];
+
+  // Get currently imported items
+  const currentDefaultImport = matches[0]?.[1] ?? null;
+  const currentNamedImports: string[] = [];
+
+  for (const match of matches) {
+    if (match[2]) {
+      const named = match[2].split(',').map(s => s.trim()).filter(Boolean);
+      currentNamedImports.push(...named);
+    }
+  }
+
+  // Determine what's missing
+  const missingHooks = usedHooks.filter(h => !currentNamedImports.includes(h));
+  const missingExports = usedExports.filter(e => !currentNamedImports.includes(e));
+  const allMissing = [...missingHooks, ...missingExports];
+
+  if (allMissing.length === 0) {
+    return code; // All imports present
+  }
+
+  console.log(`[FileGen] Fixing missing React imports: ${allMissing.join(', ')}`);
+
+  // Build the new import statement
+  const allNamedImports = [...new Set([...currentNamedImports, ...allMissing])].sort();
+  const defaultPart = currentDefaultImport || 'React';
+  const namedPart = allNamedImports.length > 0 ? `, { ${allNamedImports.join(', ')} }` : '';
+  const newImport = `import ${defaultPart}${namedPart} from 'react';`;
+
+  // Remove old React imports and add the new one
+  let newCode = code.replace(importRegex, '').trim();
+
+  // Check if there's already an import section at the top
+  if (newCode.startsWith('import ')) {
+    // Insert our import as the first import
+    newCode = newImport + '\n' + newCode;
+  } else {
+    // Add import at the very beginning
+    newCode = newImport + '\n\n' + newCode;
+  }
+
+  return newCode;
 }
 
 // =============================================================================

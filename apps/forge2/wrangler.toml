@@ -56,15 +56,15 @@ crons = ["*/5 * * * *"]
 
 # Environment variables
 [vars]
-LLM_PROVIDER = "anthropic"
+LLM_PROVIDER = "gemini"
 ANTHROPIC_MODEL = "claude-sonnet-4-5"
 GEMINI_MODEL = "gemini-3-flash-preview"
 GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 
 # Development overrides
 [env.dev]
-vars = { LLM_PROVIDER = "anthropic" }
+vars = { LLM_PROVIDER = "gemini" }
 
 # Production settings
 [env.production]
-vars = { LLM_PROVIDER = "anthropic" }
+vars = { LLM_PROVIDER = "gemini" }
