@@ -16,11 +16,10 @@ Collected from Claude Chat testing session (2026-01-07)
 - **Expected**: Components should include default/demo styles or make it clear styling is separate
 - **Fix**: Option A) Generate CSS alongside TSX, Option B) Inline critical styles in component
 
-### 3. Missing React Imports
+### ~~3. Missing React Imports~~ ✅ FIXED
 - **Issue**: Components frequently missing `useState`, `useEffect`, `useRef` imports
-- **Impact**: Components fail at runtime even though they compile
-- **Detection**: `forge_debug` catches these, but shouldn't generate broken code
-- **Fix**: Add post-generation validation that checks for React hook usage without imports
+- **Status**: FIXED - `fixReactImports()` now auto-detects and adds missing hook imports
+- **Commit**: 023345e
 
 ---
 
@@ -131,6 +130,7 @@ Collected from Claude Chat testing session (2026-01-07)
 
 ## Recently Fixed
 
+- **Missing React imports** - Post-generation validation now fixes missing useState/useEffect/useRef imports (023345e)
 - **Multi-component demo_props** - Compositions now pass props to each component correctly (a8a9edc)
 - **updateFile metadata** - Updates now preserve props/demo_props metadata (6bf445a)
 - **forge_create_image presets** - Preset options now apply correctly (25dcc97)
