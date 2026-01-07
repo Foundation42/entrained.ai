@@ -28,6 +28,9 @@ interface BundleRequest {
 
   /** External packages (loaded from CDN) */
   external?: string[];
+
+  /** Mapping of external package names to their window global names */
+  externalGlobals?: Record<string, string>;
 }
 
 interface BundleResponse {
@@ -77,7 +80,34 @@ async function bundle(request: BundleRequest): Promise<BundleResponse> {
     format = 'iife',
     minify = true,
     external = ['react', 'react-dom'],
+    externalGlobals = {},
   } = request;
+
+  // Build default globals for React
+  const allGlobals: Record<string, string> = {
+    'react': 'React',
+    'react-dom': 'ReactDOM',
+    'react-dom/client': 'ReactDOM',
+    ...externalGlobals,
+  };
+
+  // Build require shim entries
+  // For libraries that use named exports (import { x } from 'lib'), we need to return
+  // an object that has both the default export AND a named export matching the global.
+  // e.g., gsap: { default: window.gsap, gsap: window.gsap }
+  const requireEntries = Object.entries(allGlobals)
+    .map(([pkg, global]) => {
+      // Return object with both default and named export for compatibility
+      return `if (name === "${pkg}") { var m = window.${global}; return m && m.__esModule ? m : { default: m, ${global.toLowerCase()}: m, ${global}: m }; }`;
+    })
+    .join(' ');
+
+  // Also handle subpath imports (e.g., 'three/examples/...')
+  const subpathEntries = Object.entries(externalGlobals)
+    .map(([pkg, global]) => `if (name.startsWith("${pkg}/")) return window.${global};`)
+    .join(' ');
+
+  const requireShim = `var require = (function() { var cache = {}; return function(name) { if (cache[name]) return cache[name]; ${requireEntries} ${subpathEntries} console.warn("Unknown module:", name); return {}; }; })();`;
 
   // Log input for debugging
   console.log(`[Bundle] Files object keys: ${Object.keys(files).join(', ')}`);
@@ -199,7 +229,7 @@ async function bundle(request: BundleRequest): Promise<BundleResponse> {
       },
       // Inject require shim for external packages loaded from CDN
       banner: {
-        js: `var require = (name) => { if (name === "react") return window.React; if (name === "react-dom") return window.ReactDOM; if (name === "react-dom/client") return window.ReactDOM; throw new Error("Unknown module: " + name); };`,
+        js: requireShim,
       },
       logLevel: 'silent',
     });

@@ -12,6 +12,215 @@ import type {
 } from '../types';
 import { AssetService } from './assets';
 
+// =============================================================================
+// CDN Library Definitions
+// =============================================================================
+
+interface CdnLibrary {
+  /** CDN script URLs to load (in order) */
+  cdnUrls: string[];
+  /** Global variable name exposed by the library */
+  globalName: string;
+  /** Alternative import names that map to this library */
+  aliases?: string[];
+}
+
+/**
+ * Mapping of npm package names to CDN URLs and global names.
+ * These libraries will be loaded from CDN instead of bundled.
+ */
+const CDN_LIBRARIES: Record<string, CdnLibrary> = {
+  // 3D Graphics
+  'three': {
+    cdnUrls: ['https://unpkg.com/three@0.160.0/build/three.min.js'],
+    globalName: 'THREE',
+  },
+
+  // Data Visualization
+  'd3': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js'],
+    globalName: 'd3',
+  },
+  'chart.js': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js'],
+    globalName: 'Chart',
+  },
+  'plotly.js': {
+    cdnUrls: ['https://cdn.plot.ly/plotly-2.35.2.min.js'],
+    globalName: 'Plotly',
+  },
+  'plotly.js-dist': {
+    cdnUrls: ['https://cdn.plot.ly/plotly-2.35.2.min.js'],
+    globalName: 'Plotly',
+  },
+  'react-plotly.js': {
+    cdnUrls: [
+      'https://cdn.plot.ly/plotly-2.35.2.min.js',
+      'https://cdn.jsdelivr.net/npm/react-plotly.js@2/dist/create-plotly-component.min.js',
+    ],
+    globalName: 'createPlotlyComponent',
+  },
+
+  // Audio
+  'tone': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/tone@15/build/Tone.min.js'],
+    globalName: 'Tone',
+  },
+
+  // Canvas/Graphics
+  'p5': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/p5@1/lib/p5.min.js'],
+    globalName: 'p5',
+  },
+  'fabric': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/fabric@6/dist/index.min.js'],
+    globalName: 'fabric',
+  },
+  'konva': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/konva@9/konva.min.js'],
+    globalName: 'Konva',
+  },
+  'react-konva': {
+    cdnUrls: [
+      'https://cdn.jsdelivr.net/npm/konva@9/konva.min.js',
+      'https://cdn.jsdelivr.net/npm/react-konva@18/umd/react-konva.min.js',
+    ],
+    globalName: 'ReactKonva',
+  },
+
+  // Animation
+  'gsap': {
+    cdnUrls: ['https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js'],
+    globalName: 'gsap',
+  },
+  'animejs': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/animejs@3/lib/anime.min.js'],
+    globalName: 'anime',
+  },
+  'anime': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/animejs@3/lib/anime.min.js'],
+    globalName: 'anime',
+  },
+  'framer-motion': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/framer-motion@11/dist/framer-motion.min.js'],
+    globalName: 'Motion',
+  },
+
+  // Physics
+  'matter-js': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/matter-js@0.20/build/matter.min.js'],
+    globalName: 'Matter',
+  },
+
+  // Math/Science
+  'mathjs': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/mathjs@13/lib/browser/math.min.js'],
+    globalName: 'math',
+  },
+
+  // Utilities
+  'lodash': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js'],
+    globalName: '_',
+  },
+  'axios': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/axios@1/dist/axios.min.js'],
+    globalName: 'axios',
+  },
+  'dayjs': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js'],
+    globalName: 'dayjs',
+  },
+  'moment': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/moment@2/moment.min.js'],
+    globalName: 'moment',
+  },
+  'uuid': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/uuid@9/dist/umd/uuid.min.js'],
+    globalName: 'uuid',
+  },
+
+  // Maps
+  'leaflet': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/leaflet@1/dist/leaflet.min.js'],
+    globalName: 'L',
+  },
+  'mapbox-gl': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/mapbox-gl@3/dist/mapbox-gl.min.js'],
+    globalName: 'mapboxgl',
+  },
+
+  // Rich Text
+  'marked': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/marked@12/marked.min.js'],
+    globalName: 'marked',
+  },
+  'highlight.js': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/highlight.js@11/lib/index.min.js'],
+    globalName: 'hljs',
+  },
+
+  // QR Codes
+  'qrcode': {
+    cdnUrls: ['https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js'],
+    globalName: 'QRCode',
+  },
+};
+
+/**
+ * Detect which CDN libraries are imported in the given source files.
+ * Scans for import statements and require calls.
+ */
+function detectCdnLibraries(files: ResolvedFile[]): string[] {
+  const detected = new Set<string>();
+
+  // Patterns to match imports:
+  // import X from 'library'
+  // import { X } from 'library'
+  // import * as X from 'library'
+  // const X = require('library')
+  const importPatterns = [
+    /import\s+(?:[\w{},\s*]+)\s+from\s+['"]([^'"./][^'"]*)['"]/g,
+    /require\s*\(\s*['"]([^'"./][^'"]*)['"]\s*\)/g,
+  ];
+
+  for (const file of files) {
+    if (!['tsx', 'jsx', 'ts', 'js'].includes(file.fileType)) {
+      continue;
+    }
+
+    for (const pattern of importPatterns) {
+      // Reset regex state
+      pattern.lastIndex = 0;
+      let match;
+
+      while ((match = pattern.exec(file.content)) !== null) {
+        const importName = match[1];
+        if (!importName) continue;
+
+        // Get base package name (handle scoped packages and subpaths)
+        const baseName = importName.startsWith('@')
+          ? importName.split('/').slice(0, 2).join('/')
+          : importName.split('/')[0];
+
+        if (baseName && CDN_LIBRARIES[baseName]) {
+          detected.add(baseName);
+          console.log(`[Bundler] Detected CDN library: ${baseName} in ${file.canonical_name}`);
+        }
+      }
+    }
+  }
+
+  return Array.from(detected);
+}
+
+/**
+ * Get CDN library info by name
+ */
+function getCdnLibrary(name: string): CdnLibrary | undefined {
+  return CDN_LIBRARIES[name];
+}
+
 // Container response types
 interface ContainerBundleResponse {
   js: string;
@@ -168,6 +377,22 @@ export class BundlerService {
     const entry = syntheticEntry ?? this.findEntryPoint(resolvedFiles, input.entry);
     console.log(`[Bundler] Entry point: ${entry}${syntheticEntry ? ' (synthetic)' : ''}`);
 
+    // 5.5. Detect CDN libraries in source files
+    const detectedLibraries = detectCdnLibraries(resolvedFiles);
+    console.log(`[Bundler] Detected ${detectedLibraries.length} CDN libraries: ${detectedLibraries.join(', ') || 'none'}`);
+
+    // Build externals list: React + detected CDN libraries
+    const externals = ['react', 'react-dom', ...detectedLibraries];
+
+    // Build externalGlobals mapping for detected libraries
+    const externalGlobals: Record<string, string> = {};
+    for (const libName of detectedLibraries) {
+      const lib = getCdnLibrary(libName);
+      if (lib) {
+        externalGlobals[libName] = lib.globalName;
+      }
+    }
+
     // 6. Call the bundler container
     const stub = this.getBundlerStub();
     const bundleResponse = await stub.fetch('http://container/bundle', {
@@ -178,7 +403,8 @@ export class BundlerService {
         entry,
         format: 'iife',
         minify: true,
-        external: ['react', 'react-dom'],
+        external: externals,
+        externalGlobals,
       }),
     });
 
@@ -225,6 +451,7 @@ export class BundlerService {
       css: combinedCss,
       assets: resolvedAssets,
       demoProps,
+      cdnLibraries: detectedLibraries,
       customHead: input.template?.head,
       customBody: input.template?.body,
       customStyles: input.template?.styles,
@@ -462,18 +689,59 @@ export default ForgeApp;
     css: string;
     assets: AssetManifest[];
     demoProps?: Record<string, unknown>;
+    cdnLibraries?: string[];
     customHead?: string;
     customBody?: string;
     customStyles?: string;
     customScripts?: string;
   }): string {
-    const { title, js, css, assets, demoProps, customHead, customBody, customStyles, customScripts } = options;
+    const { title, js, css, assets, demoProps, cdnLibraries = [], customHead, customBody, customStyles, customScripts } = options;
 
     // Build asset map for runtime
     const assetMap = assets.reduce((acc, asset) => {
       acc[asset.canonical_name] = asset.content_url;
       return acc;
     }, {} as Record<string, string>);
+
+    // Build CDN script tags for detected libraries
+    const cdnScripts: string[] = [];
+    // Note: For libraries with named exports (import { x } from 'lib'), we return an object
+    // with both default and named exports for compatibility with esbuild's output
+    const requireShimEntries: string[] = [
+      'if (name === "react") { var m = window.React; return m && m.__esModule ? m : { default: m, React: m }; }',
+      'if (name === "react-dom") { var m = window.ReactDOM; return m && m.__esModule ? m : { default: m, ReactDOM: m }; }',
+      'if (name === "react-dom/client") { var m = window.ReactDOM; return m && m.__esModule ? m : { default: m, ReactDOM: m }; }',
+    ];
+
+    for (const libName of cdnLibraries) {
+      const lib = getCdnLibrary(libName);
+      if (lib) {
+        // Add script tags for each CDN URL
+        for (const url of lib.cdnUrls) {
+          cdnScripts.push(`  <script crossorigin src="${url}"></script>`);
+        }
+        // Add entry to require shim with both default and named exports
+        const globalLower = lib.globalName.toLowerCase();
+        requireShimEntries.push(`if (name === "${libName}") { var m = window.${lib.globalName}; return m && m.__esModule ? m : { default: m, ${globalLower}: m, ${lib.globalName}: m }; }`);
+        // Handle subpath imports (e.g., 'three/examples/jsm/...')
+        requireShimEntries.push(`if (name.startsWith("${libName}/")) return window.${lib.globalName};`);
+      }
+    }
+
+    const cdnScriptsHtml = cdnScripts.length > 0
+      ? `\n  <!-- CDN Libraries -->\n${cdnScripts.join('\n')}\n`
+      : '';
+
+    // Build the require shim with all library mappings
+    const requireShim = `var require = (function() {
+  var cache = {};
+  return function(name) {
+    if (cache[name]) return cache[name];
+    ${requireShimEntries.join('\n    ')}
+    console.warn("Unknown module:", name);
+    return {};
+  };
+})();`;
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -485,7 +753,7 @@ export default ForgeApp;
   <!-- React from CDN -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
+${cdnScriptsHtml}
   <!-- Base Reset + Bundled Styles -->
   <style>
 *, *::before, *::after {
@@ -519,6 +787,11 @@ ${customStyles ?? ''}
   <script>
     window.__FORGE_ASSETS__ = ${JSON.stringify(assetMap, null, 2)};
     window.__FORGE_DEMO_PROPS__ = ${JSON.stringify(demoProps ?? {}, null, 2)};
+  </script>
+
+  <!-- Require shim for external modules -->
+  <script>
+${requireShim}
   </script>
 
   <!-- Bundled JavaScript -->

@@ -21,17 +21,27 @@ Collected from Claude Chat testing session (2026-01-07)
 - **Status**: FIXED - `fixReactImports()` now auto-detects and adds missing hook imports
 - **Commit**: 023345e
 
+### ~~4. External CDN Library Dependencies Not Supported~~ ✅ FIXED
+- **Issue**: Components using Three.js, D3.js, Chart.js, GSAP, etc. fail to render (white screen)
+- **Impact**: Blocks 3D visualizations, data viz, audio viz, canvas graphics, animations
+- **Status**: FIXED - Bundler now auto-detects library imports and:
+  - Marks them as external in esbuild
+  - Injects CDN script tags in generated HTML
+  - Creates dynamic require shim mapping imports to window globals
+- **Supported Libraries**: Three.js, D3, Chart.js, Plotly, Tone.js, P5.js, GSAP, Anime.js, Fabric.js, Konva, Leaflet, Mapbox, Lodash, Axios, Day.js, Moment, and more
+- **Commit**: af3b730
+
 ---
 
 ## P1 - Major (Should Fix Soon)
 
-### 4. No Way to Pass Props in Composition Layout
+### 5. No Way to Pass Props in Composition Layout
 - **Issue**: When composing, can't dynamically pass props to components in layout HTML
 - **Example**: Had to hardcode `audioUrl="..."` in the layout string
 - **Impact**: Makes compositions less flexible and reusable
 - **Fix**: Support prop binding syntax in layout, e.g. `<Component :prop="value" />`
 
-### ~~5. Tool Descriptions Don't Explain Workflow~~ ✅ FIXED
+### ~~6. Tool Descriptions Don't Explain Workflow~~ ✅ FIXED
 - **Issue**: Not clear that compose is required for viewable output
 - **Status**: FIXED - Tool descriptions now explain workflow clearly:
   - forge_create explains it returns preview_url (no compose needed for single components)
@@ -39,7 +49,7 @@ Collected from Claude Chat testing session (2026-01-07)
   - forge_about emphasizes calling it first
 - **Commit**: 9eb6d5f
 
-### 6. Transparent PNG Generation Errors
+### 7. Transparent PNG Generation Errors
 - **Issue**: `forge_create_image` with `preset: "icon"` and `transparent: true` can return 500 error
 - **Status**: Partially fixed (preset handling), but mask generation can still fail
 - **Fix**: Better error handling and fallback for transparency failures
@@ -133,6 +143,7 @@ Collected from Claude Chat testing session (2026-01-07)
 
 ## Recently Fixed
 
+- **CDN library support** - Auto-detect and inject CDN scripts for Three.js, D3, Chart.js, GSAP, and 20+ libraries (af3b730)
 - **Tool descriptions** - MCP tool descriptions now explain workflow clearly (9eb6d5f)
 - **Auto-preview URL** - `forge_create` now returns `preview_url` with rendered component + CSS + demo_props (8adfc9d)
 - **Auto-generate CSS** - `forge_create` now generates matching CSS for component's css_classes (f66d03a)
