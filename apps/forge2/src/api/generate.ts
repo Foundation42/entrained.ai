@@ -1,12 +1,12 @@
 /**
  * Generation API Routes
  *
- * Endpoints for generating images and speech, integrated with the asset system.
- * Generated media are stored as versioned assets like everything else.
+ * Endpoints for generating files, images, and speech, integrated with the asset system.
+ * All generated content is stored as versioned assets.
  */
 
 import { Hono } from 'hono';
-import type { Env, CreateImageRequest, CreateSpeechRequest } from '../types';
+import type { Env, CreateImageRequest, CreateSpeechRequest, CreateFileRequest } from '../types';
 import { AssetService } from '../services/assets';
 import {
   generateImage,
@@ -15,12 +15,85 @@ import {
   generateSpeech,
   hashSpeechRequest,
   speechRequestToOptions,
+  generateFile,
+  hashFileRequest,
+  fileRequestToHints,
+  getMimeType,
   VOICE_DESCRIPTIONS,
   AVAILABLE_VOICES,
   AVAILABLE_FORMATS,
 } from '../generation';
 
 const app = new Hono<{ Bindings: Env }>();
+
+/**
+ * POST /api/generate/file
+ * Generate a source file (TSX, TS, CSS, etc.)
+ */
+app.post('/file', async (c) => {
+  const body = await c.req.json() as CreateFileRequest;
+  const { description, file_type } = body;
+
+  if (!description) {
+    return c.json({ error: 'description is required' }, 400);
+  }
+
+  if (!file_type) {
+    return c.json({ error: 'file_type is required' }, 400);
+  }
+
+  const baseUrl = new URL(c.req.url).origin;
+  const service = new AssetService(c.env, baseUrl);
+
+  // Get hints from request
+  const hints = fileRequestToHints(body);
+  const hash = hashFileRequest(description, file_type, hints);
+
+  // TODO: Check cache for identical request
+
+  try {
+    // Generate the file
+    const result = await generateFile(description, file_type, hints, c.env);
+
+    // Create as an asset
+    const manifest = await service.create({
+      name: result.canonical_name || `file-${hash}`,
+      type: 'file',
+      file_type: file_type,
+      description,
+      content: result.content,
+      mime_type: getMimeType(file_type),
+      provenance: {
+        ai_model: result.model,
+        ai_provider: result.provider,
+        source_type: 'ai_generated',
+        generation_params: {
+          description,
+          file_type,
+          hints,
+        },
+      },
+      metadata: {
+        lines: result.content.split('\n').length,
+        characters: result.content.length,
+      },
+    });
+
+    return c.json({
+      id: manifest.id,
+      canonical_name: manifest.canonical_name,
+      version: manifest.version,
+      url: manifest.content_url,
+      content: result.content,
+      file_type,
+      metadata: manifest.metadata,
+    }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[FileGen] Error:', message);
+    return c.json({ error: message }, 500);
+  }
+});
 
 /**
  * POST /api/generate/image
