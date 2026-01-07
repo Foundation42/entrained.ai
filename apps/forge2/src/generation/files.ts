@@ -19,6 +19,13 @@ export interface FileGenerationHints {
   references?: string[];
 }
 
+export interface PropDefinition {
+  name: string;
+  type: string;
+  required: boolean;
+  default: unknown;
+}
+
 export interface GeneratedFile {
   /** The generated source code */
   content: string;
@@ -37,6 +44,24 @@ export interface GeneratedFile {
 
   /** Demo props for rendering (TSX/JSX only) */
   demo_props?: Record<string, unknown>;
+
+  /** Props interface (TSX/JSX only) */
+  props?: PropDefinition[];
+
+  /** CSS class names used (TSX/JSX only) */
+  css_classes?: string[];
+
+  /** Export names */
+  exports?: string[];
+
+  /** CSS classes defined (CSS only) */
+  classes_defined?: string[];
+
+  /** CSS variables defined (CSS only) */
+  variables_defined?: string[];
+
+  /** CSS keyframe animations defined (CSS only) */
+  keyframes_defined?: string[];
 }
 
 // =============================================================================
@@ -54,15 +79,18 @@ Rules:
 - Keep components focused and single-purpose
 - Use descriptive prop names with TypeScript interfaces
 - Include JSDoc comments for the main component
-- Prefer Tailwind CSS classes for styling when applicable
+- Use semantic CSS class names (not Tailwind) for styling - these will be matched to a CSS file
 - Handle loading and error states when appropriate
 
-Output a JSON object with exactly two keys:
+Output a JSON object with these keys:
 1. "code": The complete TypeScript/React code (as a string)
-2. "demo_props": An object with example prop values that would render a nice demo of the component
+2. "demo_props": Example prop values for a nice demo render
+3. "props": Array of prop definitions: [{"name": "title", "type": "string", "required": true, "default": null}, ...]
+4. "css_classes": Array of CSS class names used in the component (e.g., ["card", "card-title", "btn"])
+5. "exports": Array of export names (e.g., ["default", "CardProps"])
 
-Example output format:
-{"code": "import React from 'react';\\n\\ninterface Props {\\n  title: string;\\n}\\n\\nconst MyComponent: React.FC<Props> = ({ title }) => {\\n  return <h1>{title}</h1>;\\n};\\n\\nexport default MyComponent;", "demo_props": {"title": "Hello World"}}
+Example:
+{"code": "import React from 'react';\\n\\ninterface CardProps {\\n  title: string;\\n  subtitle?: string;\\n}\\n\\nconst Card: React.FC<CardProps> = ({ title, subtitle }) => {\\n  return <div className=\\"card\\"><h2 className=\\"card-title\\">{title}</h2>{subtitle && <p className=\\"card-subtitle\\">{subtitle}</p>}</div>;\\n};\\n\\nexport default Card;", "demo_props": {"title": "Hello", "subtitle": "World"}, "props": [{"name": "title", "type": "string", "required": true, "default": null}, {"name": "subtitle", "type": "string", "required": false, "default": null}], "css_classes": ["card", "card-title", "card-subtitle"], "exports": ["default", "CardProps"]}
 
 Output ONLY valid JSON. No markdown fences, no explanations.`,
 
@@ -82,13 +110,22 @@ Output ONLY the TypeScript code. No explanations, no markdown fences. Just pure 
 
 Rules:
 - Use modern CSS features (custom properties, flexbox, grid)
-- Follow BEM naming convention for classes
+- Use semantic class names that describe purpose (e.g., "card", "card-title", "btn-primary")
 - Include responsive design considerations
 - Use relative units (rem, em) over pixels where appropriate
 - Group related properties logically
 - Include helpful comments for sections
 
-Output ONLY the CSS code. No explanations, no markdown fences. Just pure code.`,
+Output a JSON object with these keys:
+1. "code": The complete CSS code (as a string)
+2. "classes": Array of class names defined (without the dot, e.g., ["card", "card-title", "btn"])
+3. "variables": Array of CSS custom property names defined (e.g., ["--primary-color", "--spacing"])
+4. "keyframes": Array of keyframe animation names (e.g., ["fadeIn", "pulse"])
+
+Example:
+{"code": ".card { padding: 1rem; }\\n.card-title { font-size: 1.5rem; }", "classes": ["card", "card-title"], "variables": [], "keyframes": []}
+
+Output ONLY valid JSON. No markdown fences, no explanations.`,
 
   js: `You are an expert JavaScript developer. Generate clean, modern JavaScript.
 
@@ -248,19 +285,39 @@ export async function generateFile(
   // Generate canonical name from description
   const canonical_name = descriptionToCanonicalName(description);
 
-  // For TSX/JSX, parse JSON to extract code and demo_props
+  // Parse JSON output for file types that use structured responses
   let content: string;
   let demo_props: Record<string, unknown> | undefined;
+  let props: PropDefinition[] | undefined;
+  let css_classes: string[] | undefined;
+  let exports: string[] | undefined;
+  let classes_defined: string[] | undefined;
+  let variables_defined: string[] | undefined;
+  let keyframes_defined: string[] | undefined;
 
   if (fileType === 'tsx' || fileType === 'jsx') {
     try {
       const parsed = JSON.parse(rawContent);
       content = parsed.code || rawContent;
       demo_props = parsed.demo_props;
-      console.log(`[FileGen] Parsed TSX with demo_props: ${JSON.stringify(demo_props)}`);
+      props = parsed.props;
+      css_classes = parsed.css_classes;
+      exports = parsed.exports;
+      console.log(`[FileGen] Parsed TSX - props: ${props?.length || 0}, css_classes: ${css_classes?.length || 0}`);
     } catch {
-      // Fallback if JSON parsing fails - use raw content
-      console.warn(`[FileGen] Failed to parse JSON, using raw content`);
+      console.warn(`[FileGen] Failed to parse TSX JSON, using raw content`);
+      content = rawContent;
+    }
+  } else if (fileType === 'css') {
+    try {
+      const parsed = JSON.parse(rawContent);
+      content = parsed.code || rawContent;
+      classes_defined = parsed.classes;
+      variables_defined = parsed.variables;
+      keyframes_defined = parsed.keyframes;
+      console.log(`[FileGen] Parsed CSS - classes: ${classes_defined?.length || 0}, variables: ${variables_defined?.length || 0}`);
+    } catch {
+      console.warn(`[FileGen] Failed to parse CSS JSON, using raw content`);
       content = rawContent;
     }
   } else {
@@ -276,6 +333,12 @@ export async function generateFile(
     model: response.model,
     provider: response.provider,
     demo_props,
+    props,
+    css_classes,
+    exports,
+    classes_defined,
+    variables_defined,
+    keyframes_defined,
   };
 }
 
@@ -388,6 +451,102 @@ export function requestToHints(request: CreateFileRequest): FileGenerationHints 
     dependencies: request.hints.dependencies,
     style: request.hints.style,
     references: request.hints.references,
+  };
+}
+
+/**
+ * Generate CSS that matches a component's css_classes
+ * This is the key to AI-assisted composition - generating CSS that exactly matches
+ * the class names used by a component.
+ */
+export async function generateCssForComponent(
+  cssClasses: string[],
+  componentDescription: string,
+  styleHints: string | undefined,
+  env: Env
+): Promise<GeneratedFile> {
+  const systemPrompt = `You are an expert CSS developer. Generate CSS that implements exactly the class names provided.
+
+Rules:
+- Define CSS rules for EXACTLY the class names given - no more, no less
+- Use modern CSS features (custom properties, flexbox, grid)
+- Include responsive design considerations
+- Use relative units (rem, em) over pixels where appropriate
+- Group related properties logically
+- Make the styles visually appealing and professional
+
+Output a JSON object with these keys:
+1. "code": The complete CSS code (as a string)
+2. "classes": Array of class names defined (should match the input exactly)
+3. "variables": Array of CSS custom property names defined
+4. "keyframes": Array of keyframe animation names
+
+Output ONLY valid JSON. No markdown fences, no explanations.`;
+
+  const userPrompt = `Generate CSS for a component described as: "${componentDescription}"
+
+The component uses these CSS classes (you MUST define all of them):
+${cssClasses.map(c => `- .${c}`).join('\n')}
+
+${styleHints ? `Style hints: ${styleHints}` : ''}
+
+Generate CSS that makes this component look polished and professional.`;
+
+  const messages: LLMMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+
+  const options: LLMOptions = {
+    max_tokens: 8192,
+    temperature: 0.3,
+  };
+
+  console.log(`[FileGen] Generating CSS for ${cssClasses.length} classes: ${cssClasses.slice(0, 5).join(', ')}...`);
+
+  const response = await generateCompletion(messages, options, env);
+
+  let rawContent = response.content.trim();
+  rawContent = stripMarkdownFences(rawContent);
+
+  const canonical_name = descriptionToCanonicalName(componentDescription + '-styles');
+
+  let content: string;
+  let classes_defined: string[] | undefined;
+  let variables_defined: string[] | undefined;
+  let keyframes_defined: string[] | undefined;
+
+  try {
+    const parsed = JSON.parse(rawContent);
+    content = parsed.code || rawContent;
+    classes_defined = parsed.classes;
+    variables_defined = parsed.variables;
+    keyframes_defined = parsed.keyframes;
+    console.log(`[FileGen] Parsed CSS - classes: ${classes_defined?.length || 0}, variables: ${variables_defined?.length || 0}`);
+  } catch {
+    console.warn(`[FileGen] Failed to parse CSS JSON, using raw content`);
+    content = rawContent;
+  }
+
+  // Verify that all requested classes were defined
+  // Normalize by removing leading dots for comparison
+  const normalizedDefined = classes_defined?.map(c => c.replace(/^\./, '')) ?? [];
+  const missingClasses = cssClasses.filter(c => !normalizedDefined.includes(c));
+  if (missingClasses.length > 0) {
+    console.warn(`[FileGen] Warning: ${missingClasses.length} classes may be missing: ${missingClasses.slice(0, 5).join(', ')}`);
+  }
+  // Also normalize classes_defined for storage (store without dots)
+  classes_defined = normalizedDefined;
+
+  return {
+    content,
+    canonical_name,
+    file_type: 'css',
+    model: response.model,
+    provider: response.provider,
+    classes_defined,
+    variables_defined,
+    keyframes_defined,
   };
 }
 

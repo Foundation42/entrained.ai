@@ -186,8 +186,8 @@ export class BundlerService {
     const bundleResult = await bundleResponse.json() as ContainerBundleResponse;
     console.log(`[Bundler] Bundle complete: ${bundleResult.js.length} bytes JS, ${bundleResult.css.length} bytes CSS, ${bundleResult.buildTimeMs}ms`);
 
-    // 6. Get demo props from entry file's manifest
-    const entryFile = resolvedFiles[0];
+    // 6. Get demo props from entry file's manifest (look for TSX/JSX file)
+    const entryFile = resolvedFiles.find(f => f.fileType === 'tsx' || f.fileType === 'jsx') ?? resolvedFiles[0];
     let demoProps: Record<string, unknown> = {};
     if (entryFile) {
       const manifest = await this.assetService.get(entryFile.id);
@@ -196,11 +196,22 @@ export class BundlerService {
       }
     }
 
-    // 7. Generate HTML
+    // 7. Collect standalone CSS from resolved files
+    // (CSS that isn't imported by JS won't be bundled by esbuild)
+    const standaloneCss = resolvedFiles
+      .filter(f => f.fileType === 'css')
+      .map(f => f.content)
+      .join('\n\n');
+
+    // Combine esbuild-bundled CSS with standalone CSS
+    const combinedCss = [bundleResult.css, standaloneCss].filter(Boolean).join('\n\n');
+    console.log(`[Bundler] CSS: ${bundleResult.css.length} bytes bundled + ${standaloneCss.length} bytes standalone`);
+
+    // 8. Generate HTML
     const html = this.generateHTML({
       title: input.template?.title ?? input.name,
       js: bundleResult.js,
-      css: bundleResult.css,
+      css: combinedCss,
       assets: resolvedAssets,
       demoProps,
       customHead: input.template?.head,
@@ -212,7 +223,7 @@ export class BundlerService {
     return {
       html,
       js: bundleResult.js,
-      css: bundleResult.css,
+      css: combinedCss,
       resolvedFiles,
       resolvedAssets,
       warnings: bundleResult.warnings,

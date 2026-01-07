@@ -16,6 +16,7 @@ import {
   hashSpeechRequest,
   speechRequestToOptions,
   generateFile,
+  generateCssForComponent,
   hashFileRequest,
   fileRequestToHints,
   getMimeType,
@@ -76,7 +77,15 @@ app.post('/file', async (c) => {
       metadata: {
         lines: result.content.split('\n').length,
         characters: result.content.length,
+        // TSX/JSX metadata
         demo_props: result.demo_props,
+        props: result.props,
+        css_classes: result.css_classes,
+        exports: result.exports,
+        // CSS metadata
+        classes_defined: result.classes_defined,
+        variables_defined: result.variables_defined,
+        keyframes_defined: result.keyframes_defined,
       },
     });
 
@@ -92,6 +101,102 @@ app.post('/file', async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('[FileGen] Error:', message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+/**
+ * POST /api/generate/css-for-component
+ * Generate CSS that matches a component's css_classes
+ * This is the key to AI-assisted composition - automatically generating
+ * CSS that matches the class names a component uses.
+ */
+app.post('/css-for-component', async (c) => {
+  const body = await c.req.json() as {
+    component_id: string;
+    style?: string;
+  };
+  const { component_id, style } = body;
+
+  if (!component_id) {
+    return c.json({ error: 'component_id is required' }, 400);
+  }
+
+  const baseUrl = new URL(c.req.url).origin;
+  const service = new AssetService(c.env, baseUrl);
+
+  try {
+    // Resolve the component
+    const manifest = await service.resolve(component_id);
+    if (!manifest) {
+      return c.json({ error: `Component not found: ${component_id}` }, 404);
+    }
+
+    // Get css_classes from metadata
+    const cssClasses = manifest.metadata?.css_classes as string[] | undefined;
+    if (!cssClasses || cssClasses.length === 0) {
+      return c.json({
+        error: 'Component has no css_classes in metadata. Regenerate with newer version.',
+        component_id: manifest.id,
+      }, 400);
+    }
+
+    console.log(`[CSSForComponent] Generating CSS for ${cssClasses.length} classes from ${manifest.id}`);
+
+    // Generate CSS that matches
+    const result = await generateCssForComponent(
+      cssClasses,
+      manifest.description,
+      style,
+      c.env
+    );
+
+    // Create as an asset
+    const cssManifest = await service.create({
+      name: `${manifest.canonical_name}-styles`,
+      type: 'file',
+      file_type: 'css',
+      description: `CSS styles for ${manifest.description}`,
+      content: result.content,
+      mime_type: 'text/css',
+      provenance: {
+        ai_model: result.model,
+        ai_provider: result.provider,
+        source_type: 'ai_generated',
+        generation_params: {
+          component_id: manifest.id,
+          css_classes: cssClasses,
+          style,
+        },
+      },
+      metadata: {
+        for_component: manifest.id,
+        classes_defined: result.classes_defined,
+        variables_defined: result.variables_defined,
+        keyframes_defined: result.keyframes_defined,
+        lines: result.content.split('\n').length,
+        characters: result.content.length,
+      },
+    });
+
+    // Normalize classes_defined for comparison (already normalized in generation)
+    const normalizedDefined = result.classes_defined ?? [];
+    const missingClasses = cssClasses.filter(c => !normalizedDefined.includes(c));
+
+    return c.json({
+      id: cssManifest.id,
+      canonical_name: cssManifest.canonical_name,
+      version: cssManifest.version,
+      url: cssManifest.content_url,
+      content: result.content,
+      for_component: manifest.id,
+      classes_defined: normalizedDefined,
+      classes_requested: cssClasses,
+      missing_classes: missingClasses,
+    }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[CSSForComponent] Error:', message);
     return c.json({ error: message }, 500);
   }
 });

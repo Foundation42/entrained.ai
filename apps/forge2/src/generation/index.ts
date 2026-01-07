@@ -24,11 +24,12 @@ export { decodePNG, encodePNG, mergeWithMask } from './png';
 export {
   generateFile,
   updateFile,
+  generateCssForComponent,
   hashFileRequest,
   requestToHints as fileRequestToHints,
   getMimeType,
 } from './files';
-export type { FileGenerationHints, GeneratedFile } from './files';
+export type { FileGenerationHints, GeneratedFile, PropDefinition } from './files';
 
 export { generateCompletion } from './llm';
 export type { LLMProvider, LLMMessage, LLMResponse, LLMOptions } from './llm';
