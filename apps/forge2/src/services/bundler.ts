@@ -157,14 +157,18 @@ export class BundlerService {
     const resolvedAssets = await this.resolveAssets(input.assets ?? []);
     console.log(`[Bundler] Resolved ${resolvedAssets.length} assets`);
 
-    // 3. Build the virtual file system (may create synthetic entry for multi-component bundles)
+    // 3. Collect demo_props from all TSX/JSX components for composition
+    const componentDemoProps = await this.collectComponentDemoProps(resolvedFiles);
+    const isMultiComponent = resolvedFiles.filter(f => f.fileType === 'tsx' || f.fileType === 'jsx').length > 1;
+
+    // 4. Build the virtual file system (may create synthetic entry for multi-component bundles)
     const { fs: files, syntheticEntry } = this.buildVirtualFS(resolvedFiles, input.template?.body);
 
-    // 4. Determine entry point (prefer synthetic entry for multi-component bundles)
+    // 5. Determine entry point (prefer synthetic entry for multi-component bundles)
     const entry = syntheticEntry ?? this.findEntryPoint(resolvedFiles, input.entry);
     console.log(`[Bundler] Entry point: ${entry}${syntheticEntry ? ' (synthetic)' : ''}`);
 
-    // 5. Call the bundler container
+    // 6. Call the bundler container
     const stub = this.getBundlerStub();
     const bundleResponse = await stub.fetch('http://container/bundle', {
       method: 'POST',
@@ -186,13 +190,20 @@ export class BundlerService {
     const bundleResult = await bundleResponse.json() as ContainerBundleResponse;
     console.log(`[Bundler] Bundle complete: ${bundleResult.js.length} bytes JS, ${bundleResult.css.length} bytes CSS, ${bundleResult.buildTimeMs}ms`);
 
-    // 6. Get demo props from entry file's manifest (look for TSX/JSX file)
-    const entryFile = resolvedFiles.find(f => f.fileType === 'tsx' || f.fileType === 'jsx') ?? resolvedFiles[0];
+    // 7. For multi-component bundles, use collected props; for single component, get from entry file
     let demoProps: Record<string, unknown> = {};
-    if (entryFile) {
-      const manifest = await this.assetService.get(entryFile.id);
-      if (manifest?.metadata?.demo_props) {
-        demoProps = manifest.metadata.demo_props as Record<string, unknown>;
+    if (isMultiComponent) {
+      // For compositions, store props keyed by canonical_name
+      demoProps = componentDemoProps;
+      console.log(`[Bundler] Using multi-component demo_props for ${Object.keys(componentDemoProps).length} components`);
+    } else {
+      // For single component, use flat props from entry file
+      const entryFile = resolvedFiles.find(f => f.fileType === 'tsx' || f.fileType === 'jsx') ?? resolvedFiles[0];
+      if (entryFile) {
+        const manifest = await this.assetService.get(entryFile.id);
+        if (manifest?.metadata?.demo_props) {
+          demoProps = manifest.metadata.demo_props as Record<string, unknown>;
+        }
       }
     }
 
@@ -304,6 +315,30 @@ export class BundlerService {
   }
 
   /**
+   * Collect demo_props from all TSX/JSX components for multi-component bundles
+   * Returns a map of canonical_name -> demo_props
+   */
+  private async collectComponentDemoProps(files: ResolvedFile[]): Promise<Record<string, Record<string, unknown>>> {
+    const propsMap: Record<string, Record<string, unknown>> = {};
+
+    const tsxFiles = files.filter(f => f.fileType === 'tsx' || f.fileType === 'jsx');
+
+    for (const file of tsxFiles) {
+      try {
+        const manifest = await this.assetService.get(file.id);
+        if (manifest?.metadata?.demo_props) {
+          propsMap[file.canonical_name] = manifest.metadata.demo_props as Record<string, unknown>;
+          console.log(`[Bundler] Collected demo_props for ${file.canonical_name}`);
+        }
+      } catch (error) {
+        console.error(`[Bundler] Error getting demo_props for ${file.id}:`, error);
+      }
+    }
+
+    return propsMap;
+  }
+
+  /**
    * Build a virtual file system for the bundler container
    * If multiple TSX/JSX components exist, creates a synthetic entry that imports them all
    */
@@ -334,8 +369,9 @@ export class BundlerService {
 
   /**
    * Create a synthetic entry file that imports and renders multiple components
+   * Each component receives its demo_props from window.__FORGE_DEMO_PROPS__[canonicalName]
    */
-  private createSyntheticEntry(components: ResolvedFile[], layout?: string): string {
+  private createSyntheticEntry(components: ResolvedFile[], _layout?: string): string {
     // Generate import statements and component name mappings
     const imports: string[] = ['import React from "react";'];
     const componentMap: Array<{ name: string; path: string; canonical: string }> = [];
@@ -351,23 +387,16 @@ export class BundlerService {
       componentMap.push({ name: compName, path, canonical: comp.canonical_name });
     }
 
-    // Generate the App component
-    let appBody: string;
-
-    if (layout) {
-      // If layout provided, try to parse it and render components
-      // For now, just render all components in order (layout parsing is complex)
-      appBody = componentMap
-        .map(c => `    <${c.name} />`)
-        .join('\n');
-    } else {
-      // Default: render all components stacked
-      appBody = componentMap
-        .map(c => `    <${c.name} />`)
-        .join('\n');
-    }
+    // Generate the App component that reads props from window.__FORGE_DEMO_PROPS__
+    // Each component's props are stored under its canonical name
+    const appBody = componentMap
+      .map(c => `      <${c.name} {...(allProps["${c.canonical}"] || {})} />`)
+      .join('\n');
 
     return `${imports.join('\n')}
+
+// Access demo props from window - each component's props are keyed by canonical name
+const allProps = (typeof window !== 'undefined' && (window as any).__FORGE_DEMO_PROPS__) || {};
 
 const ForgeApp = () => {
   return (
