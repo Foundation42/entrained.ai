@@ -527,8 +527,8 @@ app.post('/compose', async (c) => {
     name: string;
     description: string;
     components: Array<{ id: string; as?: string }>;
-    layout: string;
-    wiring: Array<{
+    layout?: string;
+    wiring?: Array<{
       source: { component: string; event: string };
       target: { component: string; action: string };
       transform?: string;
@@ -538,8 +538,8 @@ app.post('/compose', async (c) => {
 
   const { name, description, components, layout, styles } = body;
 
-  if (!name || !description || !components || !layout) {
-    return c.json({ error: 'name, description, components, and layout are required' }, 400);
+  if (!name || !description || !components) {
+    return c.json({ error: 'name, description, and components are required' }, 400);
   }
 
   const baseUrl = new URL(c.req.url).origin;
@@ -550,13 +550,14 @@ app.post('/compose', async (c) => {
     // Get all component IDs
     const fileIds = components.map(comp => comp.id);
 
-    // Bundle them
+    // Bundle them with optional custom layout
     const result = await bundler.bundle({
       name,
       description,
       files: fileIds,
       template: {
         styles,
+        body: layout, // Use layout as custom body HTML if provided
       },
     });
 

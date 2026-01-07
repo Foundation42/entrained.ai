@@ -365,7 +365,7 @@ const TOOLS = [
   },
   {
     name: "forge_compose",
-    description: "Compose multiple components into a working solution. Define the layout, wire events between components, and add custom styles. This is the key tool for building multi-component applications.",
+    description: "Compose multiple components into a bundled HTML application. Optionally provide a layout template to arrange the components. This is the key tool for bundling components into deployable apps.",
     inputSchema: {
       type: "object",
       properties: {
@@ -373,47 +373,19 @@ const TOOLS = [
         description: { type: "string", description: "What this composition does" },
         components: {
           type: "array",
-          description: "Components to include",
+          description: "Components to include (by ID)",
           items: {
             type: "object",
             properties: {
-              id: { type: "string", description: "Component ID" },
-              as: { type: "string", description: "Optional alias for this instance" },
+              id: { type: "string", description: "Component/file ID to include" },
             },
             required: ["id"],
           },
         },
-        layout: { type: "string", description: "HTML/JSX layout template arranging the components" },
-        wiring: {
-          type: "array",
-          description: "Event wiring between components",
-          items: {
-            type: "object",
-            properties: {
-              source: {
-                type: "object",
-                properties: {
-                  component: { type: "string", description: "Source component alias or tag" },
-                  event: { type: "string", description: "Event name to listen for" },
-                },
-                required: ["component", "event"],
-              },
-              target: {
-                type: "object",
-                properties: {
-                  component: { type: "string", description: "Target component alias or tag" },
-                  action: { type: "string", description: "Method to call or prop to set" },
-                },
-                required: ["component", "action"],
-              },
-              transform: { type: "string", description: "Optional JS expression to transform event.detail" },
-            },
-            required: ["source", "target"],
-          },
-        },
+        layout: { type: "string", description: "Optional HTML body template arranging the components (e.g., '<my-component></my-component>')" },
         styles: { type: "string", description: "Additional CSS for the composition layout" },
       },
-      required: ["name", "description", "components", "layout", "wiring"],
+      required: ["name", "description", "components"],
     },
   },
 
@@ -696,24 +668,19 @@ async function handleToolCall(
     }
 
     case "forge_compose": {
-      const { name, description, components, layout, wiring, styles } = args as {
+      const { name, description, components, layout, styles } = args as {
         name: string;
         description: string;
-        components: Array<{ id: string; as?: string }>;
-        layout: string;
-        wiring: Array<{
-          source: { component: string; event: string };
-          target: { component: string; action: string };
-          transform?: string;
-        }>;
+        components: Array<{ id: string }>;
+        layout?: string;
         styles?: string;
       };
-      if (!name || !description || !components || !layout || !wiring) {
-        throw new Error(`Missing required parameters: name, description, components, layout, wiring`);
+      if (!name || !description || !components) {
+        throw new Error(`Missing required parameters: name, description, components`);
       }
       return forgeApi(`/api/forge/compose`, env, {
         method: "POST",
-        body: { name, description, components, layout, wiring, styles },
+        body: { name, description, components, layout, styles },
       });
     }
 
