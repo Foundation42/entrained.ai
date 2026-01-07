@@ -1,0 +1,12 @@
+{
+  "name": "forge2-bundler",
+  "version": "0.1.0",
+  "description": "Forge 2.0 Bundler Container - esbuild-based bundling service",
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.ts"
+  },
+  "dependencies": {
+    "esbuild": "^0.24.2"
+  }
+}

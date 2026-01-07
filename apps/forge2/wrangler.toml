@@ -3,6 +3,10 @@ main = "src/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Enable container logs
+[observability]
+enabled = true
+
 # D1 Database for queryable metadata
 [[d1_databases]]
 binding = "DB"
@@ -28,6 +32,27 @@ index_name = "forge2-assets"
 # Workers AI for embeddings
 [ai]
 binding = "AI"
+
+# Bundler Container (esbuild-based bundling service)
+[[containers]]
+class_name = "ForgeBundler"
+image = "./container/Dockerfile"
+max_instances = 1
+instance_type = "standard-1"
+
+# Durable Object binding for bundler container
+[[durable_objects.bindings]]
+name = "BUNDLER"
+class_name = "ForgeBundler"
+
+# Migration for Durable Objects
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ForgeBundler"]
+
+# Cron trigger to keep bundler container warm
+[triggers]
+crons = ["*/5 * * * *"]
 
 # Environment variables
 [vars]

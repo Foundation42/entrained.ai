@@ -308,6 +308,9 @@ export interface Env {
   // Workers AI
   AI: Ai;
 
+  // Bundler Container (Durable Object)
+  BUNDLER: DurableObjectNamespace;
+
   // Environment variables
   LLM_PROVIDER: string;
   ANTHROPIC_MODEL: string;

@@ -34,6 +34,9 @@ export interface GeneratedFile {
 
   /** Provider used */
   provider: string;
+
+  /** Demo props for rendering (TSX/JSX only) */
+  demo_props?: Record<string, unknown>;
 }
 
 // =============================================================================
@@ -54,7 +57,14 @@ Rules:
 - Prefer Tailwind CSS classes for styling when applicable
 - Handle loading and error states when appropriate
 
-Output ONLY the TypeScript code. No explanations, no markdown fences. Just pure code.`,
+Output a JSON object with exactly two keys:
+1. "code": The complete TypeScript/React code (as a string)
+2. "demo_props": An object with example prop values that would render a nice demo of the component
+
+Example output format:
+{"code": "import React from 'react';\\n\\ninterface Props {\\n  title: string;\\n}\\n\\nconst MyComponent: React.FC<Props> = ({ title }) => {\\n  return <h1>{title}</h1>;\\n};\\n\\nexport default MyComponent;", "demo_props": {"title": "Hello World"}}
+
+Output ONLY valid JSON. No markdown fences, no explanations.`,
 
   ts: `You are an expert TypeScript developer. Generate clean, well-typed TypeScript code.
 
@@ -232,11 +242,30 @@ export async function generateFile(
   const response = await generateCompletion(messages, options, env);
 
   // Clean up the response (remove any markdown fences that might have slipped through)
-  let content = response.content.trim();
-  content = stripMarkdownFences(content);
+  let rawContent = response.content.trim();
+  rawContent = stripMarkdownFences(rawContent);
 
   // Generate canonical name from description
   const canonical_name = descriptionToCanonicalName(description);
+
+  // For TSX/JSX, parse JSON to extract code and demo_props
+  let content: string;
+  let demo_props: Record<string, unknown> | undefined;
+
+  if (fileType === 'tsx' || fileType === 'jsx') {
+    try {
+      const parsed = JSON.parse(rawContent);
+      content = parsed.code || rawContent;
+      demo_props = parsed.demo_props;
+      console.log(`[FileGen] Parsed TSX with demo_props: ${JSON.stringify(demo_props)}`);
+    } catch {
+      // Fallback if JSON parsing fails - use raw content
+      console.warn(`[FileGen] Failed to parse JSON, using raw content`);
+      content = rawContent;
+    }
+  } else {
+    content = rawContent;
+  }
 
   console.log(`[FileGen] Generated ${content.length} chars, name: ${canonical_name}`);
 
@@ -246,6 +275,7 @@ export async function generateFile(
     file_type: fileType,
     model: response.model,
     provider: response.provider,
+    demo_props,
   };
 }
 

@@ -76,6 +76,7 @@ app.post('/file', async (c) => {
       metadata: {
         lines: result.content.split('\n').length,
         characters: result.content.length,
+        demo_props: result.demo_props,
       },
     });
 

@@ -14,6 +14,7 @@ import type { Env } from './types';
 import searchRoutes from './api/search';
 import assetRoutes from './api/assets';
 import generateRoutes from './api/generate';
+import composeRoutes from './api/compose';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -52,6 +53,7 @@ app.get('/', (c) => {
       search: '/api/search',
       assets: '/api/assets',
       generate: '/api/generate',
+      compose: '/api/compose',
       health: '/api/health',
     },
   });
@@ -159,6 +161,7 @@ app.get('/api/docs', (c) => {
 app.route('/api/search', searchRoutes);
 app.route('/api/assets', assetRoutes);
 app.route('/api/generate', generateRoutes);
+app.route('/api/compose', composeRoutes);
 
 // ===========================================================================
 // 404 Handler
@@ -186,7 +189,31 @@ app.onError((err, c) => {
 });
 
 // ===========================================================================
+// Cron Handler (Keep bundler container warm)
+// ===========================================================================
+
+const scheduled: ExportedHandler<Env>['scheduled'] = async (_event, env, _ctx) => {
+  console.log('[Cron] Warming bundler container...');
+  try {
+    const id = env.BUNDLER.idFromName('bundler');
+    const stub = env.BUNDLER.get(id);
+    const response = await stub.fetch('http://container/health');
+    const health = await response.json();
+    console.log('[Cron] Bundler health:', health);
+  } catch (error) {
+    console.error('[Cron] Failed to warm bundler:', error);
+  }
+};
+
+// ===========================================================================
 // Export
 // ===========================================================================
 
-export default app;
+// Durable Object for bundler container
+export { ForgeBundler } from './lib/container';
+
+// Worker entry point
+export default {
+  fetch: app.fetch,
+  scheduled,
+};

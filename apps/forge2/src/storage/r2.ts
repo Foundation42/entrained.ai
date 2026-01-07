@@ -304,14 +304,14 @@ export class R2Storage {
    * Generate the public URL for an asset's content
    */
   contentUrl(id: string, baseUrl: string): string {
-    return `${baseUrl}/assets/${id}/content`;
+    return `${baseUrl}/api/assets/${id}/content`;
   }
 
   /**
    * Generate the public URL for an asset's manifest
    */
   manifestUrl(id: string, baseUrl: string): string {
-    return `${baseUrl}/assets/${id}/manifest`;
+    return `${baseUrl}/api/assets/${id}`;
   }
 
   // ===========================================================================
