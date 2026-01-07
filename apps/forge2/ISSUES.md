@@ -4,11 +4,11 @@ Collected from Claude Chat testing session (2026-01-07)
 
 ## P0 - Critical (Must Fix)
 
-### 1. No Preview Without Compose
+### ~~1. No Preview Without Compose~~ ✅ FIXED
 - **Issue**: `forge_create` only returns source code, not a viewable preview
-- **Impact**: Can't see what you created without an extra compose step
-- **Expected**: Components should have immediate demo/preview URL upon creation
-- **Fix**: Auto-generate single-component bundle with demo_props after creation
+- **Status**: FIXED - `forge_create` now returns `preview_url` with rendered component + CSS + demo_props
+- **Response includes**: `preview_url: "https://.../component-demo-v1-.../content"`
+- **Commit**: 8adfc9d
 
 ### ~~2. CSS Not Bundled Automatically~~ ✅ FIXED
 - **Issue**: Components generate without any styling
@@ -130,6 +130,7 @@ Collected from Claude Chat testing session (2026-01-07)
 
 ## Recently Fixed
 
+- **Auto-preview URL** - `forge_create` now returns `preview_url` with rendered component + CSS + demo_props (8adfc9d)
 - **Auto-generate CSS** - `forge_create` now generates matching CSS for component's css_classes (f66d03a)
 - **Missing React imports** - Post-generation validation now fixes missing useState/useEffect/useRef imports (023345e)
 - **Multi-component demo_props** - Compositions now pass props to each component correctly (a8a9edc)
