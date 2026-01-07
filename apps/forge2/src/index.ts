@@ -15,6 +15,7 @@ import searchRoutes from './api/search';
 import assetRoutes from './api/assets';
 import generateRoutes from './api/generate';
 import composeRoutes from './api/compose';
+import forgeRoutes from './api/forge';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -162,6 +163,47 @@ app.route('/api/search', searchRoutes);
 app.route('/api/assets', assetRoutes);
 app.route('/api/generate', generateRoutes);
 app.route('/api/compose', composeRoutes);
+app.route('/api/forge', forgeRoutes);
+
+// ===========================================================================
+// Container Status (for MCP health checks)
+// ===========================================================================
+
+app.get('/api/container/status', async (c) => {
+  const startTime = Date.now();
+
+  try {
+    const id = c.env.BUNDLER.idFromName('bundler');
+    const stub = c.env.BUNDLER.get(id);
+    const response = await stub.fetch('http://container/health');
+    const latency = Date.now() - startTime;
+
+    if (response.ok) {
+      const health = await response.json() as { status: string; service: string; runtime: string; esbuild: string };
+      return c.json({
+        status: 'warm',
+        container: health,
+        latency_ms: latency,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      return c.json({
+        status: 'error',
+        error: `Container returned ${response.status}`,
+        latency_ms: latency,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (error) {
+    const latency = Date.now() - startTime;
+    return c.json({
+      status: 'cold',
+      error: error instanceof Error ? error.message : 'Container not responding',
+      latency_ms: latency,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
 
 // ===========================================================================
 // 404 Handler

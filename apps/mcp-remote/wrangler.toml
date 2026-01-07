@@ -10,7 +10,7 @@ routes = [
 [vars]
 GOODFAITH_API = "https://goodfaith.entrained.ai/api"
 AUTH_API = "https://auth.entrained.ai/api"
-FORGE_API = "https://forge.entrained.ai"
+FORGE_API = "https://forge2.divine-cell-b9ef.workers.dev"
 
 # Durable Object for long-lived SSE sessions
 [[durable_objects.bindings]]
