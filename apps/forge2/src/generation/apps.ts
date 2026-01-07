@@ -265,109 +265,121 @@ export async function generateApp(
   console.log('[AppGen] Step 1: Planning app structure...');
   const plan = await planApp(description, style, env);
 
-  // 2. Generate each component
-  console.log(`[AppGen] Step 2: Generating ${plan.components.length} components...`);
+  // 2. Generate all TSX components in PARALLEL
+  console.log(`[AppGen] Step 2: Generating ${plan.components.length} components in parallel...`);
+  const tsxResults = await Promise.all(
+    plan.components.map(async (componentPlan) => {
+      console.log(`[AppGen] Starting component: ${componentPlan.name}`);
+      const tsxDescription = `${componentPlan.name} component: ${componentPlan.description}. Props: ${componentPlan.props.join(', ')}`;
+      const tsx = await generateFile(tsxDescription, 'tsx', { style: plan.style }, env);
+      console.log(`[AppGen] Completed component: ${componentPlan.name}`);
+      return { componentPlan, tsx, tsxDescription };
+    })
+  );
+
+  // 3. Store TSX manifests + Generate CSS + Images + Speech all in PARALLEL
+  console.log('[AppGen] Step 3: Generating CSS, images, and speech in parallel...');
+
+  // Prepare all parallel tasks
+  const allTasks: Promise<void>[] = [];
   const generatedComponents: GeneratedComponent[] = [];
+  const generatedImages: GeneratedAsset[] = [];
+  const generatedSpeech: GeneratedAsset[] = [];
 
-  for (const componentPlan of plan.components) {
-    console.log(`[AppGen] Generating component: ${componentPlan.name}`);
-
-    // Generate TSX
-    const tsxDescription = `${componentPlan.name} component: ${componentPlan.description}. Props: ${componentPlan.props.join(', ')}`;
-    const tsx = await generateFile(tsxDescription, 'tsx', { style: plan.style }, env);
-
-    // Store TSX as asset
-    const tsxManifest = await assetService.create({
-      name: `${plan.name}-${componentPlan.name.toLowerCase()}`,
-      type: 'file',
-      file_type: 'tsx',
-      description: tsxDescription,
-      content: tsx.content,
-      mime_type: 'text/typescript',
-      provenance: {
-        ai_model: tsx.model,
-        ai_provider: tsx.provider,
-        source_type: 'ai_generated',
-        generation_params: { description: tsxDescription, style: plan.style },
-      },
-      metadata: {
-        demo_props: tsx.demo_props,
-        props: tsx.props,
-        css_classes: tsx.css_classes,
-        exports: tsx.exports,
-        app_name: plan.name,
-        component_role: componentPlan.role,
-      },
-    });
-
-    // Generate CSS for the component
-    let css: GeneratedFile;
-    let cssManifest;
-
-    if (tsx.css_classes && tsx.css_classes.length > 0) {
-      css = await generateCssForComponent(
-        tsx.css_classes,
-        tsxDescription,
-        plan.style,
-        env
-      );
-
-      cssManifest = await assetService.create({
-        name: `${plan.name}-${componentPlan.name.toLowerCase()}-styles`,
+  // Task: Store each TSX and generate its CSS
+  for (const { componentPlan, tsx, tsxDescription } of tsxResults) {
+    allTasks.push((async () => {
+      // Store TSX
+      const tsxManifest = await assetService.create({
+        name: `${plan.name}-${componentPlan.name.toLowerCase()}`,
         type: 'file',
-        file_type: 'css',
-        description: `CSS for ${componentPlan.name}`,
-        content: css.content,
-        mime_type: 'text/css',
+        file_type: 'tsx',
+        description: tsxDescription,
+        content: tsx.content,
+        mime_type: 'text/typescript',
         provenance: {
-          ai_model: css.model,
-          ai_provider: css.provider,
+          ai_model: tsx.model,
+          ai_provider: tsx.provider,
           source_type: 'ai_generated',
-          generation_params: { css_classes: tsx.css_classes, style: plan.style },
+          generation_params: { description: tsxDescription, style: plan.style },
         },
         metadata: {
-          for_component: tsxManifest.id,
-          classes_defined: css.classes_defined,
-          variables_defined: css.variables_defined,
-          keyframes_defined: css.keyframes_defined,
+          demo_props: tsx.demo_props,
+          props: tsx.props,
+          css_classes: tsx.css_classes,
+          exports: tsx.exports,
+          app_name: plan.name,
+          component_role: componentPlan.role,
         },
       });
-    } else {
-      // Create empty CSS if no classes
-      css = {
-        content: `/* No CSS classes for ${componentPlan.name} */`,
-        canonical_name: `${plan.name}-${componentPlan.name.toLowerCase()}-styles`,
-        file_type: 'css',
-        model: 'none',
-        provider: 'none',
-      };
 
-      cssManifest = await assetService.create({
-        name: css.canonical_name,
-        type: 'file',
-        file_type: 'css',
-        description: `CSS for ${componentPlan.name}`,
-        content: css.content,
-        mime_type: 'text/css',
-        provenance: { source_type: 'ai_generated' },
-        metadata: { for_component: tsxManifest.id },
+      // Generate and store CSS
+      let css: GeneratedFile;
+      let cssManifest;
+
+      if (tsx.css_classes && tsx.css_classes.length > 0) {
+        console.log(`[AppGen] Generating CSS for: ${componentPlan.name}`);
+        css = await generateCssForComponent(
+          tsx.css_classes,
+          tsxDescription,
+          plan.style,
+          env
+        );
+
+        cssManifest = await assetService.create({
+          name: `${plan.name}-${componentPlan.name.toLowerCase()}-styles`,
+          type: 'file',
+          file_type: 'css',
+          description: `CSS for ${componentPlan.name}`,
+          content: css.content,
+          mime_type: 'text/css',
+          provenance: {
+            ai_model: css.model,
+            ai_provider: css.provider,
+            source_type: 'ai_generated',
+            generation_params: { css_classes: tsx.css_classes, style: plan.style },
+          },
+          metadata: {
+            for_component: tsxManifest.id,
+            classes_defined: css.classes_defined,
+            variables_defined: css.variables_defined,
+            keyframes_defined: css.keyframes_defined,
+          },
+        });
+      } else {
+        css = {
+          content: `/* No CSS classes for ${componentPlan.name} */`,
+          canonical_name: `${plan.name}-${componentPlan.name.toLowerCase()}-styles`,
+          file_type: 'css',
+          model: 'none',
+          provider: 'none',
+        };
+
+        cssManifest = await assetService.create({
+          name: css.canonical_name,
+          type: 'file',
+          file_type: 'css',
+          description: `CSS for ${componentPlan.name}`,
+          content: css.content,
+          mime_type: 'text/css',
+          provenance: { source_type: 'ai_generated' },
+          metadata: { for_component: tsxManifest.id },
+        });
+      }
+
+      generatedComponents.push({
+        plan: componentPlan,
+        tsx,
+        tsxId: tsxManifest.id,
+        css,
+        cssId: cssManifest.id,
       });
-    }
-
-    generatedComponents.push({
-      plan: componentPlan,
-      tsx,
-      tsxId: tsxManifest.id,
-      css,
-      cssId: cssManifest.id,
-    });
+    })());
   }
 
-  // 3. Generate images (if any)
-  const generatedImages: GeneratedAsset[] = [];
-  if (plan.images.length > 0) {
-    console.log(`[AppGen] Step 3a: Generating ${plan.images.length} images...`);
-    for (const imagePlan of plan.images) {
+  // Task: Generate each image in parallel
+  for (const imagePlan of plan.images) {
+    allTasks.push((async () => {
       console.log(`[AppGen] Generating image: ${imagePlan.id}`);
       try {
         const imageResult = await generateImage(
@@ -403,18 +415,16 @@ export async function generateApp(
           url: imageManifest.content_url,
           type: 'image',
         });
+        console.log(`[AppGen] Completed image: ${imagePlan.id}`);
       } catch (error) {
         console.error(`[AppGen] Failed to generate image ${imagePlan.id}:`, error);
-        // Continue without this image
       }
-    }
+    })());
   }
 
-  // 3b. Generate speech (if any)
-  const generatedSpeech: GeneratedAsset[] = [];
-  if (plan.speech.length > 0) {
-    console.log(`[AppGen] Step 3b: Generating ${plan.speech.length} audio clips...`);
-    for (const speechPlan of plan.speech) {
+  // Task: Generate each speech in parallel
+  for (const speechPlan of plan.speech) {
+    allTasks.push((async () => {
       console.log(`[AppGen] Generating speech: ${speechPlan.id}`);
       try {
         const speechResult = await generateSpeech(
@@ -449,12 +459,16 @@ export async function generateApp(
           url: speechManifest.content_url,
           type: 'speech',
         });
+        console.log(`[AppGen] Completed speech: ${speechPlan.id}`);
       } catch (error) {
         console.error(`[AppGen] Failed to generate speech ${speechPlan.id}:`, error);
-        // Continue without this audio
       }
-    }
+    })());
   }
+
+  // Wait for all parallel tasks to complete
+  await Promise.all(allTasks);
+  console.log(`[AppGen] Parallel generation complete: ${generatedComponents.length} components, ${generatedImages.length} images, ${generatedSpeech.length} speech`);
 
   // Build asset URL map for components to use
   const assetUrls: Record<string, string> = {};
@@ -465,7 +479,7 @@ export async function generateApp(
     assetUrls[(speech.plan as SpeechAssetPlan).id] = speech.url;
   }
 
-  // 4. Generate App wrapper
+  // 4. Generate App wrapper (sequential - needs all component info)
   console.log('[AppGen] Step 4: Generating App wrapper...');
   const appWrapper = await generateAppWrapper(plan, generatedComponents, assetUrls, env);
 
