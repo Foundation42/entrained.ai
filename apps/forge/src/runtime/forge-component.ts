@@ -106,6 +106,7 @@ export abstract class ForgeComponent<P = Record<string, unknown>> extends HTMLEl
   private _instanceId: string;
   private _baseUrl: string;
   private _componentId: string;
+  private _hasRendered: boolean = false;
 
   // Storage APIs
   public instance!: StorageAPI;
@@ -223,6 +224,12 @@ export abstract class ForgeComponent<P = Record<string, unknown>> extends HTMLEl
   onUnmount(): void {}
 
   /**
+   * Override in subclass: Called after the first render completes
+   * Use this for DOM operations that need refs to be set (e.g., canvas setup)
+   */
+  onFirstRender(): void {}
+
+  /**
    * Override in subclass: Return JSX/HTML for the component
    */
   abstract render(): string | Node;
@@ -247,6 +254,12 @@ export abstract class ForgeComponent<P = Record<string, unknown>> extends HTMLEl
     } else {
       this.shadowRoot.innerHTML = `<style>${styles}</style>`;
       this.shadowRoot.appendChild(rendered);
+    }
+
+    // Call onFirstRender after first render completes (refs are now available)
+    if (!this._hasRendered) {
+      this._hasRendered = true;
+      this.onFirstRender();
     }
   }
 

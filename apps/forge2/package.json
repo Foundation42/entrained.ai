@@ -1,0 +1,26 @@
+{
+  "name": "forge2",
+  "version": "0.1.0",
+  "description": "Conversational asset workspace and build system",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "db:migrate": "wrangler d1 migrations apply forge-db --local",
+    "db:migrate:prod": "wrangler d1 migrations apply forge-db --remote",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "semver": "^7.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "@types/semver": "^7.5.8",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.99.0"
+  }
+}
