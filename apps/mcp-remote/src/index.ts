@@ -253,7 +253,7 @@ const TOOLS = [
   // === Forge Tools ===
   {
     name: "forge_search",
-    description: "Search for existing components by natural language description. Returns components sorted by semantic similarity. Use this first to discover what already exists before creating new components.",
+    description: "Search for existing components by natural language description. Returns components sorted by semantic similarity. ALWAYS search first before creating - reuse existing components when possible!",
     inputSchema: {
       type: "object",
       properties: {
@@ -298,7 +298,15 @@ const TOOLS = [
   },
   {
     name: "forge_create",
-    description: "Create a new WebComponent from a natural language description. The AI will generate TSX code, transpile it, and deploy it. Returns the new component's ID and URL.",
+    description: `Create a new React component from a natural language description. Returns EVERYTHING you need:
+
+- id: Component identifier
+- preview_url: LIVE PREVIEW with rendered component + CSS + demo props (open this to see it!)
+- css.id: Auto-generated stylesheet matching the component's classes
+- props: Component's prop definitions
+- css_classes: CSS class names used
+
+The preview_url is immediately viewable - no need to call forge_compose for single components!`,
     inputSchema: {
       type: "object",
       properties: {
@@ -365,7 +373,16 @@ const TOOLS = [
   },
   {
     name: "forge_compose",
-    description: "Compose multiple components into a bundled HTML application. Optionally provide a layout template to arrange the components. This is the key tool for bundling components into deployable apps.",
+    description: `Bundle MULTIPLE components into a single HTML application. Use this when you need to combine 2+ components together.
+
+NOTE: For SINGLE components, just use forge_create - it already returns a preview_url!
+
+Use forge_compose when:
+- Combining multiple components (e.g., header + gallery + footer)
+- Adding custom layout/arrangement
+- Including generated images or speech assets
+
+Returns a content_url with the bundled app.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -382,7 +399,7 @@ const TOOLS = [
             required: ["id"],
           },
         },
-        layout: { type: "string", description: "Optional HTML body template arranging the components (e.g., '<my-component></my-component>')" },
+        layout: { type: "string", description: "Optional HTML body template arranging the components" },
         styles: { type: "string", description: "Additional CSS for the composition layout" },
       },
       required: ["name", "description", "components"],
@@ -392,7 +409,16 @@ const TOOLS = [
   // === Forge Asset Tools ===
   {
     name: "forge_create_image",
-    description: "Generate an image using AI (Google Gemini). Returns a cached URL if the same prompt+options were used before. Great for icons, illustrations, sprites, and hero images.",
+    description: `Generate an AI image (Google Gemini). Returns a permanent URL you can use in components.
+
+Presets (recommended):
+- preset: "icon" → 512x512 transparent PNG (perfect for logos/icons)
+- preset: "hero" → 1920x1080 (landing pages, headers)
+- preset: "sprite" → 64x64 pixel-art (games)
+
+Or customize: width, height, style (illustration/photo/3d/pixel-art), transparent.
+
+Images are cached - same prompt returns same URL instantly.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -414,7 +440,13 @@ const TOOLS = [
   },
   {
     name: "forge_create_speech",
-    description: "Generate speech audio using AI (OpenAI TTS). Returns a cached URL if the same text+options were used before. Supports multiple voices and custom voice instructions.",
+    description: `Generate AI speech audio (OpenAI TTS). Returns a permanent URL you can use in components.
+
+Popular voices: nova (warm female), onyx (deep male), alloy (neutral), shimmer (expressive)
+
+Use 'instructions' for style: "speak slowly and calmly", "excited and energetic", "whisper mysteriously"
+
+Audio is cached - same text+options returns same URL instantly.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -447,7 +479,16 @@ const TOOLS = [
   },
   {
     name: "forge_about",
-    description: "Get comprehensive documentation about Forge - the WebComponent generation platform. Returns info about runtime capabilities, available tools, asset generation, storage APIs, and best practices. Call this first to understand what Forge can do.",
+    description: `Get comprehensive Forge documentation. Call this FIRST if you're unsure how Forge works!
+
+Returns:
+- Quick start workflow (search → create → preview)
+- All tool descriptions with examples
+- Asset generation (images, speech)
+- Best practices and tips
+- Common patterns
+
+The documentation is thorough - read it to understand the full platform capabilities.`,
     inputSchema: {
       type: "object",
       properties: {},
