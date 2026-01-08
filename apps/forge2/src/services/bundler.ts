@@ -630,10 +630,20 @@ export class BundlerService {
       .map(c => `      <${c.name} {...(allProps["${c.canonical}"] || {})} />`)
       .join('\n');
 
+    // Generate global exports for each component so custom layouts can use them
+    const globalExports = componentMap
+      .map(c => `(window as any).${c.name} = ${c.name};`)
+      .join('\n');
+
     return `${imports.join('\n')}
 
 // Access demo props from window - each component's props are keyed by canonical name
 const allProps = (typeof window !== 'undefined' && (window as any).__FORGE_DEMO_PROPS__) || {};
+
+// Expose individual components as globals for custom layout scripts
+if (typeof window !== 'undefined') {
+${globalExports}
+}
 
 const ForgeApp = () => {
   return (
@@ -792,6 +802,9 @@ html, body {
   width: 100%;
   min-height: 100vh;
 }
+#root:empty {
+  display: none;
+}
 img {
   max-width: 100%;
   height: auto;
@@ -804,7 +817,6 @@ ${customStyles ?? ''}
 </head>
 <body>
   <div id="root"></div>
-  ${customBody ?? ''}
 
   <!-- Asset Map -->
   <script>
@@ -821,8 +833,13 @@ ${requireShim}
   <script>
 ${js}
 
-// Auto-mount the default export if present
+// Auto-mount the default export if present (skip if custom layout provided)
 (function() {
+  var hasCustomLayout = ${customBody ? 'true' : 'false'};
+  if (hasCustomLayout) {
+    console.log('[Forge] Custom layout detected, skipping auto-mount');
+    return;
+  }
   try {
     var bundle = window.ForgeBundle;
     if (bundle && bundle.default) {
@@ -850,6 +867,9 @@ ${js}
   }
 })();
   </script>
+
+  <!-- Custom layout (after bundle so components are available as globals) -->
+  ${customBody ?? ''}
 
   ${customScripts ?? ''}
 </body>

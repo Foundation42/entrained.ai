@@ -242,7 +242,20 @@ Collected from Claude Chat testing sessions (2026-01-07, 2026-01-08)
 
 ## Recently Fixed
 
-### 2026-01-08
+### 2026-01-08 (Dogfooding Session - Frontend Build)
+- **Components not exposed as globals** - Custom layout scripts couldn't access bundled components
+  - Fix: Synthetic entry now exports each component to window (e.g., `window.AppShell = AppShell`)
+- **Script ordering wrong** - Custom layout script ran before bundle, globals undefined
+  - Fix: Moved `customBody` to AFTER bundle script in HTML template
+- **Auto-mount conflict** - Auto-mount rendered all components into #root, conflicting with custom layouts
+  - Fix: Skip auto-mount when `customBody` is provided
+- **Empty #root taking space** - Empty #root div had `min-height: 100vh`, pushing content down
+  - Fix: Added `#root:empty { display: none; }` CSS rule
+- **Forge Playground MVP** - Built component gallery UI using Forge itself!
+  - Components: AppShell, Header, Sidebar, ComponentCard, ComponentGrid, ComponentDetail
+  - Live preview: https://forge2.divine-cell-b9ef.workers.dev/api/assets/forge-playground-v13-eda1/content
+
+### 2026-01-08 (Earlier)
 - **Bun bundler migration** - Switched from esbuild to Bun for native npm resolution (638a3c3)
   - @react-three/fiber and @react-three/drei now work!
   - jsx-runtime shim for React UMD compatibility
