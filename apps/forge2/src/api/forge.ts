@@ -20,6 +20,7 @@ import {
   parseSource,
   generateCanonicalName,
   getMimeType,
+  generateCompletion,
 } from '../generation';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -1341,6 +1342,75 @@ app.get('/:id/debug', async (c) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({ error: message }, 500);
+  }
+});
+
+/**
+ * POST /api/forge/:id/review
+ * Get AI code review/analysis of a component
+ */
+app.post('/:id/review', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json() as { question: string };
+
+  if (!body.question) {
+    return c.json({ error: 'question is required' }, 400);
+  }
+
+  const baseUrl = new URL(c.req.url).origin;
+  const service = new AssetService(c.env, baseUrl);
+
+  try {
+    const manifest = await service.resolve(id);
+    if (!manifest) {
+      return c.json({ error: `Component not found: ${id}` }, 404);
+    }
+
+    const source = await service.getContentAsText(id);
+    if (!source) {
+      return c.json({ error: `Source not found: ${id}` }, 404);
+    }
+
+    // Call LLM for code review
+    const systemPrompt = `You are an expert code reviewer specializing in React, TypeScript, and frontend development.
+You're reviewing a component and will provide helpful, actionable feedback.
+
+Guidelines:
+- Be specific and reference line numbers or code sections when relevant
+- Suggest concrete improvements with code examples when appropriate
+- Consider performance, accessibility, best practices, and potential bugs
+- Be constructive and educational in your feedback
+- If the question asks about something specific (like back-face culling), focus on that`;
+
+    const userPrompt = `Here is the component source code for "${manifest.canonical_name}":
+
+\`\`\`${manifest.file_type || 'tsx'}
+${source}
+\`\`\`
+
+${body.question}`;
+
+    const result = await generateCompletion(
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      { max_tokens: 4096 },
+      c.env
+    );
+
+    return c.json({
+      id: manifest.id,
+      name: manifest.canonical_name,
+      question: body.question,
+      review: result.content,
+      model: result.model,
+      provider: result.provider,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[ForgeAPI] Review error:', message);
     return c.json({ error: message }, 500);
   }
 });

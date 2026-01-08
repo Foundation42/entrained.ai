@@ -583,6 +583,26 @@ The documentation is thorough - read it to understand the full platform capabili
       },
     },
   },
+  {
+    name: "forge_review",
+    description: `Get an AI code review for a component. Ask questions about the implementation, request feedback on specific code sections, or get suggestions for improvements.
+
+Examples:
+- "Review the back-face culling implementation"
+- "Is this animation loop efficient?"
+- "Check for memory leaks in the useEffect cleanup"
+- "Suggest improvements for accessibility"
+
+Returns detailed AI analysis and suggestions.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID to review" },
+        question: { type: "string", description: "What to review or ask about the code" },
+      },
+      required: ["id", "question"],
+    },
+  },
 ];
 
 // Handle tool calls
@@ -919,6 +939,18 @@ async function handleToolCall(
           ? 'Container is cold. Call forge_health with warmup=true, or wait and retry forge_create.'
           : 'Container error. Check Forge service status.',
       };
+    }
+
+    case "forge_review": {
+      const id = args.id as string;
+      const question = args.question as string;
+      if (!id || !question) {
+        throw new Error(`Missing required parameters: id, question`);
+      }
+      return forgeApi(`/api/forge/${id}/review`, env, {
+        method: "POST",
+        body: { question },
+      });
     }
 
     default:
@@ -1380,6 +1412,7 @@ Connect Claude Chat to GoodFaith!
 - forge_upload_update - Update with raw source (no AI)
 - forge_retranspile - Rebuild component
 - forge_debug - Diagnose component issues
+- forge_review - Get AI code review for a component
 - forge_compose - Compose multiple components
 
 ## Forge Asset Tools (Image & Speech Generation)
