@@ -67,6 +67,16 @@ app.get('/api/health', (c) => {
   });
 });
 
+// ===========================================================================
+// Playground - Stable URL for Forge UI
+// ===========================================================================
+
+const PLAYGROUND_VERSION = 'forge-playground-v17-435d';
+
+app.get('/playground', (c) => {
+  return c.redirect(`/api/assets/${PLAYGROUND_VERSION}/content`);
+});
+
 app.get('/api/docs', (c) => {
   return c.json({
     openapi: '3.0.0',
