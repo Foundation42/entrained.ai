@@ -1,35 +1,39 @@
 # Forge 2.0 - Known Issues & Roadmap
 
-Collected from Claude Chat testing session (2026-01-07)
+Collected from Claude Chat testing sessions (2026-01-07, 2026-01-08)
 
 ## P0 - Critical (Must Fix)
 
 ### ~~1. No Preview Without Compose~~ ✅ FIXED
 - **Issue**: `forge_create` only returns source code, not a viewable preview
-- **Status**: FIXED - `forge_create` now returns `preview_url` with rendered component + CSS + demo_props
+- **Status**: FIXED - ALL create/update tools now return `preview_url` automatically!
+- **Tools affected**: `forge_create`, `forge_upload`, `forge_update`, `forge_update_source`, `forge_upload_update`
 - **Response includes**: `preview_url: "https://.../component-demo-v1-.../content"`
-- **Commit**: 8adfc9d
+- **Commit**: 8adfc9d, 8cb4fd8
 
 ### ~~2. CSS Not Bundled Automatically~~ ✅ FIXED
 - **Issue**: Components generate without any styling
-- **Status**: FIXED - `forge_create` now auto-generates matching CSS for all css_classes
+- **Status**: FIXED - ALL create/update tools now auto-generate matching CSS
 - **Response includes**: `css: { id, content_url }` with the generated stylesheet
-- **Commit**: f66d03a
+- **Commit**: f66d03a, 8cb4fd8
 
 ### ~~3. Missing React Imports~~ ✅ FIXED
 - **Issue**: Components frequently missing `useState`, `useEffect`, `useRef` imports
 - **Status**: FIXED - `fixReactImports()` now auto-detects and adds missing hook imports
 - **Commit**: 023345e
 
-### ~~4. External CDN Library Dependencies Not Supported~~ ✅ FIXED
+### ~~4. External CDN Library Dependencies Not Supported~~ ✅ FIXED (v2)
 - **Issue**: Components using Three.js, D3.js, Chart.js, GSAP, etc. fail to render (white screen)
 - **Impact**: Blocks 3D visualizations, data viz, audio viz, canvas graphics, animations
-- **Status**: FIXED - Bundler now auto-detects library imports and:
-  - Marks them as external in esbuild
-  - Injects CDN script tags in generated HTML
-  - Creates dynamic require shim mapping imports to window globals
-- **Supported Libraries**: Three.js, D3, Chart.js, Plotly, Tone.js, P5.js, GSAP, Anime.js, Fabric.js, Konva, Leaflet, Mapbox, Lodash, Axios, Day.js, Moment, and more
-- **Commit**: af3b730
+- **Status**: FIXED v2 - Migrated from esbuild to **Bun bundler** with native npm resolution!
+  - Bun resolves npm packages directly (no CDN workarounds for npm-only packages)
+  - @react-three/fiber and @react-three/drei now work!
+  - CDN libraries (D3, GSAP, Leaflet, Tone.js) still auto-detected and loaded
+  - jsx-runtime shim for React UMD compatibility
+- **Supported Libraries**:
+  - **npm bundled**: @react-three/fiber, @react-three/drei, three
+  - **CDN loaded**: D3, Chart.js, Plotly, Tone.js, P5.js, GSAP, Anime.js, Fabric.js, Konva, Leaflet, Mapbox, Lodash, Axios, Day.js, Moment, and more
+- **Commits**: af3b730 (esbuild CDN), 638a3c3 (Bun migration)
 
 ---
 
@@ -82,6 +86,30 @@ Collected from Claude Chat testing session (2026-01-07)
 - **Issue**: Only catches import issues, not runtime problems
 - **Status**: Acceptable, but could check for common runtime issues
 
+### 23. Debug Tool Shows Stale Analysis (Session 2)
+- **Issue**: forge_debug sometimes reports issues that have already been fixed
+- **Impact**: Confusing error messages that don't reflect actual code
+- **Expected**: Debug should always analyze current source code state
+
+### 24. Component Preview Props Not Configurable (Session 2)
+- **Issue**: Auto-generated preview uses demo_props, but can't customize for testing
+- **Use Case**: Want to test component with different prop values without composing
+- **Suggestion**: Add optional `preview_props` parameter to forge_create
+
+### 25. No Component Gallery/Showcase (Session 2)
+- **Issue**: Hard to browse and discover existing components
+- **Suggestion**: Web UI or tool to browse all components with live previews
+- **Use Cases**: "Show me all button components", "Browse data viz components"
+
+### 26. Canvas Components Don't Show Usage Hints (Session 2)
+- **Issue**: Interactive components work but users don't know what to do
+- **Suggestion**: Tooltips, keyboard shortcuts, "click to start" messages
+- **Priority**: P3 (UX polish)
+
+### 27. No Component Versioning UI (Session 2)
+- **Issue**: Can see version numbers but hard to browse version history
+- **Suggestion**: Tool to show all versions, what changed, rollback/fork options
+
 ### 12. No "Test Before Deploy" for Compositions
 - **Issue**: Can't easily verify a composition works with real data before finalizing
 - **Impact**: Trial and error workflow
@@ -103,15 +131,29 @@ Collected from Claude Chat testing session (2026-01-07)
 ### 16. CSS Options Not Clear
 - Document all styling methods: inline, compose styles, CDN imports, AI-generated CSS
 
+### 17. External Library Integration Patterns (Session 2)
+- **Need**: Clear documentation on which libraries are supported
+- **Should Cover**:
+  - List of pre-configured CDN libraries vs npm-bundled packages
+  - How to request new library support
+  - ESM vs UMD format handling
+
+### 18. Complex Interactive Component Best Practices (Session 2)
+- **Need**: Guidance for building Canvas-based, WebGL/3D, audio/video, real-time components
+- **Should Cover**:
+  - Performance optimization
+  - Cleanup patterns (useEffect cleanup)
+  - Event handling and state management
+
 ---
 
 ## Feature Requests
 
-### 17. forge_create_styled Convenience Tool
-- Single tool that creates component + CSS + preview in one call
+### ~~17. forge_create_styled Convenience Tool~~ ✅ IMPLEMENTED
+- **Status**: No longer needed! ALL create/update tools now return preview_url + CSS automatically
 
-### 18. Component CSS Generation
-- AI-generate matching CSS for a component: `forge_create_css(component_id, style_description)`
+### ~~18. Component CSS Generation~~ ✅ IMPLEMENTED
+- **Status**: FIXED - CSS auto-generated for all components from their css_classes
 
 ### 19. Batch Asset Operations
 - Generate multiple related assets at once with consistent style
@@ -125,10 +167,51 @@ Collected from Claude Chat testing session (2026-01-07)
 ### 22. Composition Validation
 - Check if all required props are provided before deploying
 
+### 28. Multi-Component Templates (Session 2)
+- **Request**: Pre-built templates combining common component sets
+- **Examples**: "Blog layout", "Dashboard", "Portfolio site"
+- **Benefit**: Faster starting points for common use cases
+
+### 29. Component Playground/Sandbox (Session 2)
+- **Request**: Interactive way to modify props and see results live
+- **Similar To**: Storybook but built into Forge
+- **Features**: Adjust props with sliders/inputs, see changes in real-time
+
+### 30. Component Remix/Fork (Session 2)
+- **Request**: Easy way to create variant of existing component
+- **Example**: "Take toggle-switch-v1-abc and make it with neon colors"
+- **Current Workaround**: Use forge_update but creates new version
+
+---
+
+## New Tools (2026-01-08)
+
+### forge_upload ✨ NEW
+- **Purpose**: Upload raw source code WITHOUT using AI generation
+- **Use case**: Claude Chat writes the code itself, Forge handles bundling
+- **Features**:
+  - Metadata (props, css_classes, exports, demo_props) auto-extracted from source
+  - CSS auto-generated from extracted class names
+  - Preview bundle auto-created
+- **Commit**: 8cb4fd8
+
+### forge_upload_update ✨ NEW
+- **Purpose**: Update existing component with raw source (no AI)
+- **Use case**: Same as forge_upload but for updates
+- **Commit**: 8cb4fd8
+
+### Patch/Edit Mode in forge_update_source ✨ NEW
+- **Purpose**: Make surgical edits without resending entire source
+- **Format**: `{ edits: [{ old: "find this", new: "replace with" }, ...] }`
+- **Rules**: Each "old" string must be unique (found exactly once)
+- **Benefit**: Efficient small changes, like Claude Code's Edit tool
+- **Commit**: 8cb4fd8
+
 ---
 
 ## What Works Well
 
+### Core Features
 - Generation quality (components look professional)
 - Semantic search accuracy
 - Immutable versioning system
@@ -137,12 +220,39 @@ Collected from Claude Chat testing session (2026-01-07)
 - Multi-component composition
 - Debug tool for static issues
 - Caching system (same input = same output)
-- Demo props now passed to composed components (fixed 2026-01-07)
+
+### Session 2 Highlights
+- ✅ Auto-preview generation (no more compose required!)
+- ✅ Auto-CSS generation (components look good immediately!)
+- ✅ React imports fixed (useState/useEffect work!)
+- ✅ Transparent PNG generation working
+- ✅ Canvas API support (drawing worked flawlessly!)
+- ✅ Interactive components (buttons, forms, sliders all great)
+- ✅ Image generation (all styles work great)
+- ✅ Speech generation (worked perfectly)
+- ✅ CDN library support (Three.js, D3, GSAP, etc.)
+
+### Session 3 Highlights (2026-01-08)
+- ✅ Raw source upload (Claude Chat can write its own code!)
+- ✅ Patch/edit mode (surgical changes without full source)
+- ✅ @react-three/fiber support (Bun bundler migration)
+- ✅ Universal preview_url on all create/update tools
 
 ---
 
 ## Recently Fixed
 
+### 2026-01-08
+- **Bun bundler migration** - Switched from esbuild to Bun for native npm resolution (638a3c3)
+  - @react-three/fiber and @react-three/drei now work!
+  - jsx-runtime shim for React UMD compatibility
+- **forge_upload** - NEW: Upload raw source without AI generation (8cb4fd8)
+- **forge_upload_update** - NEW: Update component with raw source (8cb4fd8)
+- **Patch/edit mode** - forge_update_source now supports `edits` array for surgical changes (8cb4fd8)
+- **Universal preview_url** - ALL create/update tools now return preview_url + CSS (8cb4fd8)
+- **Source parser** - Auto-extracts props, css_classes, exports from uploaded source (8cb4fd8)
+
+### 2026-01-07
 - **CDN library support** - Auto-detect and inject CDN scripts for Three.js, D3, Chart.js, GSAP, and 20+ libraries (af3b730)
 - **Tool descriptions** - MCP tool descriptions now explain workflow clearly (9eb6d5f)
 - **Auto-preview URL** - `forge_create` now returns `preview_url` with rendered component + CSS + demo_props (8adfc9d)
