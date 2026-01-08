@@ -1396,7 +1396,7 @@ ${body.question}`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      { max_tokens: 4096 },
+      { max_tokens: 16384 },
       c.env
     );
 
