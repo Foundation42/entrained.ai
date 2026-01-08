@@ -36,3 +36,11 @@ export type { LLMProvider, LLMMessage, LLMResponse, LLMOptions } from './llm';
 
 export { planApp, generateApp } from './apps';
 export type { AppPlan, ComponentPlan, ImageAssetPlan, SpeechAssetPlan, GeneratedComponent, GeneratedAsset, GeneratedApp } from './apps';
+
+export {
+  parseSource,
+  parseTSXSource,
+  parseCSSSource,
+  generateCanonicalName,
+} from './source-parser';
+export type { ParsedSourceMetadata, ParsedTSXMetadata, ParsedCSSMetadata } from './source-parser';

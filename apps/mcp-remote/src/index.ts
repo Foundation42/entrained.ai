@@ -329,26 +329,50 @@ The preview_url is immediately viewable - no need to forge_compose for single co
   },
   {
     name: "forge_update",
-    description: "Update an existing component using natural language. Describe the changes you want and the AI will modify the code. Creates a new version (immutable).",
+    description: `Update an existing component using natural language. Describe the changes you want and the AI will modify the code. Creates a new version (immutable).
+
+Returns preview_url, css, and updated metadata - no need to forge_compose after updating!`,
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Component ID to update" },
         changes: { type: "string", description: "Natural language description of changes to make" },
+        style: { type: "string", description: "Optional style hints for CSS generation" },
       },
       required: ["id", "changes"],
     },
   },
   {
     name: "forge_update_source",
-    description: "Replace a component's TSX source code directly. Use this when you need precise control over the code. Creates a new version (immutable).",
+    description: `Replace or patch a component's source code directly. Two modes:
+
+1. **Full replacement**: Provide \`source\` with complete new code
+2. **Patch mode**: Provide \`edits\` array with search/replace operations (more efficient!)
+
+Patch format: \`edits: [{ old: "text to find", new: "replacement" }, ...]\`
+Each "old" string must be unique in the source.
+
+Returns preview_url, css, and extracted metadata - no need to forge_compose after updating!`,
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Component ID to update" },
-        source: { type: "string", description: "Complete new TSX source code" },
+        source: { type: "string", description: "Complete new source code (full replacement mode)" },
+        edits: {
+          type: "array",
+          description: "Array of search/replace edits (patch mode - more efficient!)",
+          items: {
+            type: "object",
+            properties: {
+              old: { type: "string", description: "Text to find (must be unique)" },
+              new: { type: "string", description: "Replacement text" },
+            },
+            required: ["old", "new"],
+          },
+        },
+        style: { type: "string", description: "Optional style hints for CSS generation" },
       },
-      required: ["id", "source"],
+      required: ["id"],
     },
   },
   {
@@ -371,6 +395,56 @@ The preview_url is immediately viewable - no need to forge_compose for single co
         id: { type: "string", description: "Component ID to debug" },
       },
       required: ["id"],
+    },
+  },
+  {
+    name: "forge_upload",
+    description: `Upload raw source code directly WITHOUT using AI generation. Perfect for when YOU (Claude) write the code yourself!
+
+The metadata (props, css_classes, exports, demo_props) is automatically extracted from your source code.
+
+Returns:
+- id: Component identifier
+- preview_url: LIVE PREVIEW with rendered component
+- css: Auto-generated CSS matching your class names (uses AI for CSS only)
+- Extracted metadata from your code
+
+Options:
+- generate_css: true (default) - Generate CSS for your css classes
+- generate_preview: true (default) - Create preview bundle
+- style: Style hints for CSS generation (e.g., "dark mode", "minimalist")
+
+Use this when you want to write the TSX yourself instead of having forge_create's AI do it.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "Your TSX/JSX/CSS source code" },
+        file_type: { type: "string", description: "File type: tsx, jsx, ts, js, css" },
+        name: { type: "string", description: "Optional component name (extracted from source if not provided)" },
+        description: { type: "string", description: "Optional description" },
+        generate_css: { type: "boolean", description: "Generate CSS for TSX components (default: true)" },
+        generate_preview: { type: "boolean", description: "Generate preview bundle (default: true)" },
+        style: { type: "string", description: "Style hints for CSS generation" },
+      },
+      required: ["source", "file_type"],
+    },
+  },
+  {
+    name: "forge_upload_update",
+    description: `Update an existing component with new raw source code. Creates a new version with metadata extracted from the source.
+
+Like forge_upload but for updates. Use this when you want to directly replace the source of an existing component with your own code.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID to update" },
+        source: { type: "string", description: "New TSX/JSX/CSS source code" },
+        description: { type: "string", description: "Optional new description" },
+        generate_css: { type: "boolean", description: "Generate CSS for TSX components (default: true)" },
+        generate_preview: { type: "boolean", description: "Generate preview bundle (default: true)" },
+        style: { type: "string", description: "Style hints for CSS generation" },
+      },
+      required: ["id", "source"],
     },
   },
   {
@@ -678,19 +752,28 @@ async function handleToolCall(
       }
       return forgeApi(`/api/forge/${id}/update`, env, {
         method: "POST",
-        body: { changes },
+        body: { changes, style: args.style },
       });
     }
 
     case "forge_update_source": {
       const id = args.id as string;
-      const source = args.source as string;
-      if (!id || !source) {
-        throw new Error(`Missing required parameters: id, source`);
+      const source = args.source as string | undefined;
+      const edits = args.edits as Array<{ old: string; new: string }> | undefined;
+
+      if (!id) {
+        throw new Error(`Missing required parameter: id`);
       }
+      if (!source && !edits) {
+        throw new Error(`Either source or edits is required`);
+      }
+      if (source && edits) {
+        throw new Error(`Provide either source or edits, not both`);
+      }
+
       return forgeApi(`/api/forge/${id}/source`, env, {
         method: "PUT",
-        body: { source },
+        body: { source, edits, style: args.style },
       });
     }
 
@@ -708,6 +791,44 @@ async function handleToolCall(
         throw new Error(`Missing required parameter: id`);
       }
       return forgeApi(`/api/forge/${id}/debug`, env);
+    }
+
+    case "forge_upload": {
+      const source = args.source as string;
+      const file_type = args.file_type as string;
+      if (!source || !file_type) {
+        throw new Error(`Missing required parameters: source, file_type`);
+      }
+      return forgeApi(`/api/forge/upload`, env, {
+        method: "POST",
+        body: {
+          source,
+          file_type,
+          name: args.name,
+          description: args.description,
+          generate_css: args.generate_css,
+          generate_preview: args.generate_preview,
+          style: args.style,
+        },
+      });
+    }
+
+    case "forge_upload_update": {
+      const id = args.id as string;
+      const source = args.source as string;
+      if (!id || !source) {
+        throw new Error(`Missing required parameters: id, source`);
+      }
+      return forgeApi(`/api/forge/upload/${id}`, env, {
+        method: "PUT",
+        body: {
+          source,
+          description: args.description,
+          generate_css: args.generate_css,
+          generate_preview: args.generate_preview,
+          style: args.style,
+        },
+      });
     }
 
     case "forge_compose": {
@@ -1252,9 +1373,11 @@ Connect Claude Chat to GoodFaith!
 - forge_get_manifest - Get component details
 - forge_get_source - Get TSX source
 - forge_get_types - Get TypeScript types
-- forge_create - Create new component
+- forge_create - Create new component (AI-generated)
+- forge_upload - Upload raw source (no AI, metadata auto-extracted)
 - forge_update - Update via AI
 - forge_update_source - Direct source update
+- forge_upload_update - Update with raw source (no AI)
 - forge_retranspile - Rebuild component
 - forge_debug - Diagnose component issues
 - forge_compose - Compose multiple components
