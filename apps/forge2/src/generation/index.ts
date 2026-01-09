@@ -44,3 +44,5 @@ export {
   generateCanonicalName,
 } from './source-parser';
 export type { ParsedSourceMetadata, ParsedTSXMetadata, ParsedCSSMetadata } from './source-parser';
+
+export { resolveReferences } from './references';

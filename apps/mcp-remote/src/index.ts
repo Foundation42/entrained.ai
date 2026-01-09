@@ -323,6 +323,22 @@ The preview_url is immediately viewable - no need to forge_compose for single co
             similar_to: { type: "string", description: "Component ID to use as reference" },
           },
         },
+        references: {
+          type: "array",
+          description: "Reference material for AI context (design systems, example components, guidelines)",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["component", "css", "guidelines", "image"], description: "Reference type" },
+              id: { type: "string", description: "Component ID (for component/css types)" },
+              content: { type: "string", description: "Inline content (for css/guidelines types)" },
+              url: { type: "string", description: "Image URL (for image type)" },
+              use: { type: "string", enum: ["style", "behavior", "both"], description: "What to take from a component reference" },
+              description: { type: "string", description: "Description of what to take from an image reference" },
+            },
+            required: ["type"],
+          },
+        },
       },
       required: ["description"],
     },
@@ -338,6 +354,22 @@ Returns preview_url, css, and updated metadata - no need to forge_compose after 
         id: { type: "string", description: "Component ID to update" },
         changes: { type: "string", description: "Natural language description of changes to make" },
         style: { type: "string", description: "Optional style hints for CSS generation" },
+        references: {
+          type: "array",
+          description: "Reference material for AI context (design systems, example components, guidelines)",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["component", "css", "guidelines", "image"], description: "Reference type" },
+              id: { type: "string", description: "Component ID (for component/css types)" },
+              content: { type: "string", description: "Inline content (for css/guidelines types)" },
+              url: { type: "string", description: "Image URL (for image type)" },
+              use: { type: "string", enum: ["style", "behavior", "both"], description: "What to take from a component reference" },
+              description: { type: "string", description: "Description of what to take from an image reference" },
+            },
+            required: ["type"],
+          },
+        },
       },
       required: ["id", "changes"],
     },
@@ -445,6 +477,23 @@ Like forge_upload but for updates. Use this when you want to directly replace th
         style: { type: "string", description: "Style hints for CSS generation" },
       },
       required: ["id", "source"],
+    },
+  },
+  {
+    name: "forge_publish",
+    description: `Publish a component's draft to create a new immutable version. After publishing, the component becomes searchable via forge_search.
+
+Use this after iterating on a draft with forge_create/forge_update to make it discoverable.
+
+Returns the new version number, semver, and confirms the component is now searchable.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Component ID to publish" },
+        changelog: { type: "string", description: "Optional description of changes in this version" },
+        bump: { type: "string", enum: ["major", "minor", "patch"], description: "Semantic version bump type (default: patch)" },
+      },
+      required: ["id"],
     },
   },
   {
@@ -760,7 +809,7 @@ async function handleToolCall(
       }
       return forgeApi(`/api/forge/create`, env, {
         method: "POST",
-        body: { description, hints: args.hints },
+        body: { description, hints: args.hints, references: args.references },
       });
     }
 
@@ -772,7 +821,7 @@ async function handleToolCall(
       }
       return forgeApi(`/api/forge/${id}/update`, env, {
         method: "POST",
-        body: { changes, style: args.style },
+        body: { changes, style: args.style, references: args.references },
       });
     }
 
@@ -847,6 +896,20 @@ async function handleToolCall(
           generate_css: args.generate_css,
           generate_preview: args.generate_preview,
           style: args.style,
+        },
+      });
+    }
+
+    case "forge_publish": {
+      const id = args.id as string;
+      if (!id) {
+        throw new Error(`Missing required parameter: id`);
+      }
+      return forgeApi(`/api/forge/${id}/publish`, env, {
+        method: "POST",
+        body: {
+          changelog: args.changelog,
+          bump: args.bump,
         },
       });
     }
@@ -1401,15 +1464,16 @@ Connect Claude Chat to GoodFaith!
 
 ## Forge Tools (WebComponent Platform)
 
-- forge_search - Search for components
+- forge_search - Search for PUBLISHED components
 - forge_get_manifest - Get component details
 - forge_get_source - Get TSX source
 - forge_get_types - Get TypeScript types
-- forge_create - Create new component (AI-generated)
+- forge_create - Create new component DRAFT (AI-generated)
 - forge_upload - Upload raw source (no AI, metadata auto-extracted)
-- forge_update - Update via AI
+- forge_update - Update draft via AI
 - forge_update_source - Direct source update
 - forge_upload_update - Update with raw source (no AI)
+- forge_publish - Publish draft to make it searchable (with changelog + semver)
 - forge_retranspile - Rebuild component
 - forge_debug - Diagnose component issues
 - forge_review - Get AI code review for a component

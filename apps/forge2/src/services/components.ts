@@ -95,6 +95,9 @@ export interface PublishInput {
 
   /** Optional version changelog */
   changelog?: string;
+
+  /** Semantic version bump type (defaults to 'patch') */
+  bump?: 'major' | 'minor' | 'patch';
 }
 
 export interface ComponentSearchInput {
@@ -324,7 +327,7 @@ export class ComponentService {
    * - Deletes the draft
    */
   async publish(input: PublishInput): Promise<ComponentWithVersion> {
-    const { component_id, changelog } = input;
+    const { component_id, changelog, bump = 'patch' } = input;
 
     // Get component
     const componentRecord = await this.d1.getComponent(component_id);
@@ -349,10 +352,22 @@ export class ComponentService {
     const nextVersion = componentRecord.latest_version + 1;
     const versionId = generateVersionId(component_id, nextVersion);
 
-    // Get previous version for parent_version_id
+    // Get previous version for parent_version_id and semver calculation
     const prevVersionId = componentRecord.latest_version > 0
       ? generateVersionId(component_id, componentRecord.latest_version)
       : undefined;
+
+    // Calculate semver based on previous version and bump type
+    let semver: string;
+    if (componentRecord.latest_version === 0) {
+      // First version starts at 1.0.0
+      semver = '1.0.0';
+    } else {
+      // Get previous version's semver
+      const prevVersion = await this.d1.getLatestVersion(component_id);
+      const prevSemver = prevVersion?.semver ?? '1.0.0';
+      semver = this.bumpSemver(prevSemver, bump);
+    }
 
     // Store version in R2
     const versionManifest = await this.r2.storeVersion({
@@ -377,6 +392,7 @@ export class ComponentService {
       id: versionId,
       component_id,
       version: nextVersion,
+      semver,
       parent_version_id: prevVersionId,
       description: changelog ?? draftManifest.description,
       content_url: this.r2.versionContentUrl(component_id, nextVersion, this.baseUrl),
@@ -745,5 +761,23 @@ Name:`;
     };
 
     return fileType ? (mimeMap[fileType] ?? 'application/octet-stream') : 'application/octet-stream';
+  }
+
+  /**
+   * Bump a semantic version string
+   */
+  private bumpSemver(current: string, bump: 'major' | 'minor' | 'patch'): string {
+    const parts = current.split('.').map(Number);
+    const [major = 1, minor = 0, patch = 0] = parts;
+
+    switch (bump) {
+      case 'major':
+        return `${major + 1}.0.0`;
+      case 'minor':
+        return `${major}.${minor + 1}.0`;
+      case 'patch':
+      default:
+        return `${major}.${minor}.${patch + 1}`;
+    }
   }
 }

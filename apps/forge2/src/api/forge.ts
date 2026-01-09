@@ -10,6 +10,7 @@ import type { Env } from '../types';
 import { AssetService } from '../services/assets';
 import { ComponentService } from '../services/components';
 import { BundlerService } from '../services/bundler';
+import type { GenerationReference } from '../types';
 import {
   generateFile,
   updateFile,
@@ -21,6 +22,7 @@ import {
   parseSource,
   getMimeType,
   generateCompletion,
+  resolveReferences,
 } from '../generation';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -91,15 +93,21 @@ app.get('/about', (c) => {
     },
 
     versioning: {
-      description: 'Components use draft/publish versioning',
+      description: 'Components use draft/publish versioning with semantic versioning',
       format: {
         component_id: 'Short UUID like "ebc7-4f2a"',
         version_id: '"ebc7-4f2a-v1", "ebc7-4f2a-v2", etc.',
+        semver: '"1.0.0", "1.1.0", "2.0.0" - controlled via bump parameter',
       },
       states: {
         draft: 'Mutable, not searchable, has preview_url',
         published: 'Immutable versions, searchable via forge_search',
       },
+      publish_options: {
+        changelog: 'Optional description of changes in this version',
+        bump: '"major" | "minor" | "patch" (default: patch) - controls semver increment',
+      },
+      example: 'forge_publish({ id: "abc-1234", changelog: "Added dark mode", bump: "minor" }) → v2, semver 1.1.0',
     },
 
     generation: {
@@ -107,6 +115,26 @@ app.get('/about', (c) => {
       images: 'Gemini generates images with style presets (illustration, photo, 3d, pixel-art)',
       speech: 'OpenAI TTS with 13 voices and custom instructions',
       apps: 'Full orchestration: Plan → Generate Components → Generate CSS → Generate Media → Compose → Deploy',
+    },
+
+    references: {
+      description: 'Provide context to AI during generation (forge_create, forge_update)',
+      purpose: 'Match existing design systems, follow guidelines, or use components as style references',
+      types: {
+        component: 'Reference another component for style/behavior matching',
+        css: 'Provide CSS/design system variables to follow',
+        guidelines: 'Text guidelines (brand rules, design principles)',
+        image: 'Visual reference (mockup, screenshot)',
+      },
+      usage: {
+        component_ref: '{ type: "component", id: "abc-1234", use: "style" | "behavior" | "both" }',
+        css_inline: '{ type: "css", content: ":root { --primary: blue; }" }',
+        css_by_id: '{ type: "css", id: "design-system-css-abc" }',
+        guidelines: '{ type: "guidelines", content: "Use rounded corners, avoid shadows" }',
+        image: '{ type: "image", url: "https://...", description: "Match this layout" }',
+      },
+      example: 'forge_create({ description: "A card component", references: [{ type: "component", id: "existing-card", use: "style" }] })',
+      stored_in: 'References are stored in version provenance for debugging/reproducibility',
     },
 
     externalLibraries: {
@@ -159,6 +187,8 @@ app.get('/about', (c) => {
       'Use forge_upload when YOU write the code, forge_create when you want AI to generate it',
       'Iterate on drafts freely - they dont pollute search results',
       'Call forge_publish when component is ready to be discoverable',
+      'Use references to maintain consistent style across components (pass your design system CSS)',
+      'Use bump parameter in forge_publish: patch for fixes, minor for features, major for breaking changes',
       'Asset generation is cached - same inputs return cached results',
       'External libraries (Three.js, D3, GSAP, etc.) are auto-loaded from CDN - just import them!',
     ],
@@ -733,6 +763,10 @@ export default function ${manifest.canonical_name.replace(/-/g, '')}(props: Prop
  * Create a new component DRAFT from description
  * The component is NOT searchable until forge_publish is called
  * Automatically generates matching CSS for the component's css_classes
+ *
+ * Options:
+ * - hints.style: Style hints (e.g., "modern", "minimal", "dark")
+ * - references: Array of reference material (components, CSS, guidelines, images)
  */
 app.post('/create', async (c) => {
   const body = await c.req.json() as {
@@ -743,9 +777,11 @@ app.post('/create', async (c) => {
       style?: string;
       similar_to?: string;
     };
+    /** Reference material for AI context */
+    references?: GenerationReference[];
   };
 
-  const { description, hints } = body;
+  const { description, hints, references } = body;
 
   if (!description) {
     return c.json({ error: 'description is required' }, 400);
@@ -756,8 +792,19 @@ app.post('/create', async (c) => {
   const assetService = new AssetService(c.env, baseUrl);
 
   try {
-    // Generate TSX file using AI
-    const generated = await generateFile(description, 'tsx', { style: hints?.style }, c.env);
+    // Resolve references (fetch component sources, CSS, etc.)
+    let resolvedRefs: GenerationReference[] | undefined;
+    if (references?.length) {
+      console.log(`[ForgeAPI] Resolving ${references.length} references...`);
+      resolvedRefs = await resolveReferences(references, c.env, baseUrl);
+      console.log(`[ForgeAPI] Resolved ${resolvedRefs.length} references`);
+    }
+
+    // Generate TSX file using AI with resolved references
+    const generated = await generateFile(description, 'tsx', {
+      style: hints?.style,
+      typedReferences: resolvedRefs,
+    }, c.env);
 
     // Create component draft using ComponentService
     const createResult = await componentService.create({
@@ -772,6 +819,7 @@ app.post('/create', async (c) => {
         ai_provider: generated.provider,
         source_type: 'ai_generated',
         generation_params: { description, hints },
+        references: resolvedRefs,
       },
       metadata: {
         demo_props: generated.demo_props,
@@ -901,11 +949,18 @@ app.post('/create', async (c) => {
  */
 app.post('/:id/update', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json() as { changes: string; style?: string };
+  const body = await c.req.json() as {
+    changes: string;
+    style?: string;
+    /** Reference material for AI context */
+    references?: GenerationReference[];
+  };
 
   if (!body.changes) {
     return c.json({ error: 'changes is required' }, 400);
   }
+
+  const { references } = body;
 
   const baseUrl = new URL(c.req.url).origin;
   const service = new AssetService(c.env, baseUrl);
@@ -922,8 +977,18 @@ app.post('/:id/update', async (c) => {
       return c.json({ error: `Source not found: ${id}` }, 404);
     }
 
-    // Generate updated source
-    const result = await updateFile(currentSource, body.changes, 'tsx', c.env);
+    // Resolve references (fetch component sources, CSS, etc.)
+    let resolvedRefs: GenerationReference[] | undefined;
+    if (references?.length) {
+      console.log(`[ForgeAPI] Resolving ${references.length} references for update...`);
+      resolvedRefs = await resolveReferences(references, c.env, baseUrl);
+      console.log(`[ForgeAPI] Resolved ${resolvedRefs.length} references`);
+    }
+
+    // Generate updated source with references
+    const result = await updateFile(currentSource, body.changes, 'tsx', c.env, {
+      typedReferences: resolvedRefs,
+    });
 
     // Create new version
     const newManifest = await service.create({
@@ -938,7 +1003,11 @@ app.post('/:id/update', async (c) => {
         ai_model: result.model,
         ai_provider: result.provider,
         source_type: 'ai_generated',
-        generation_params: { changes: body.changes, parent: manifest.id },
+        generation_params: {
+          changes: body.changes,
+          parent: manifest.id,
+          references: resolvedRefs,
+        },
       },
       metadata: {
         demo_props: result.demo_props,
@@ -1064,10 +1133,17 @@ app.post('/:id/update', async (c) => {
  * POST /api/forge/:id/publish
  * Publish a component's draft to create a new version
  * After publishing, the component is searchable via forge_search
+ *
+ * Options:
+ * - changelog: Description of changes in this version
+ * - bump: 'major' | 'minor' | 'patch' (default: 'patch') - semantic version bump
  */
 app.post('/:id/publish', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json().catch(() => ({})) as { changelog?: string };
+  const body = await c.req.json().catch(() => ({})) as {
+    changelog?: string;
+    bump?: 'major' | 'minor' | 'patch';
+  };
 
   const baseUrl = new URL(c.req.url).origin;
   const componentService = new ComponentService(c.env, baseUrl);
@@ -1076,6 +1152,7 @@ app.post('/:id/publish', async (c) => {
     const result = await componentService.publish({
       component_id: id,
       changelog: body.changelog,
+      bump: body.bump,
     });
 
     return c.json({
@@ -1084,11 +1161,13 @@ app.post('/:id/publish', async (c) => {
       name: result.component.canonical_name,
       status: result.component.status,
       version: result.version.version,
+      semver: result.version.semver,
+      changelog: result.version.description,
       description: result.component.description,
       content_url: result.version.content_url,
       manifest_url: result.version.manifest_url,
       created_at: result.version.created_at,
-      message: `Published version ${result.version.version} - component is now searchable`,
+      message: `Published v${result.version.semver} (version ${result.version.version}) - component is now searchable`,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

@@ -5,7 +5,7 @@
  * Each file type has specialized prompts and extraction logic.
  */
 
-import type { Env, CreateFileRequest, FileType } from '../types';
+import type { Env, CreateFileRequest, FileType, GenerationReference } from '../types';
 import { generateCompletion, type LLMMessage, type LLMOptions } from './llm';
 
 export interface FileGenerationHints {
@@ -15,8 +15,11 @@ export interface FileGenerationHints {
   /** Style hints (e.g., "modern", "minimal", "dark") */
   style?: string;
 
-  /** Reference file IDs or content samples */
+  /** Reference file IDs or content samples (legacy) */
   references?: string[];
+
+  /** Typed reference material (design systems, examples, guidelines) */
+  typedReferences?: GenerationReference[];
 }
 
 export interface PropDefinition {
@@ -264,6 +267,48 @@ export async function generateFile(
     userPrompt += `\n\nReference examples:\n${hints.references.join('\n\n---\n\n')}`;
   }
 
+  // Format typed references into the prompt
+  if (hints?.typedReferences?.length) {
+    userPrompt += '\n\n## Reference Material\nUse the following as context for generation:\n';
+
+    for (const ref of hints.typedReferences) {
+      switch (ref.type) {
+        case 'component':
+          if (ref.resolved) {
+            userPrompt += `\n### Reference Component: ${ref.resolved.name}\n`;
+            if (ref.use === 'style') {
+              userPrompt += 'Match the visual style and CSS patterns of this component:\n';
+            } else if (ref.use === 'behavior') {
+              userPrompt += 'Match the behavior and interaction patterns of this component:\n';
+            } else {
+              userPrompt += 'Use this as a reference for style and behavior:\n';
+            }
+            userPrompt += `\`\`\`tsx\n${ref.resolved.source}\n\`\`\`\n`;
+          }
+          break;
+
+        case 'css':
+          userPrompt += '\n### Design System CSS\nFollow these styles and variables:\n';
+          const cssContent = ref.resolved?.source ?? ref.content;
+          if (cssContent) {
+            userPrompt += `\`\`\`css\n${cssContent}\n\`\`\`\n`;
+          }
+          break;
+
+        case 'guidelines':
+          userPrompt += '\n### Guidelines\n' + ref.content + '\n';
+          break;
+
+        case 'image':
+          userPrompt += `\n### Visual Reference\nImage: ${ref.url}\n`;
+          if (ref.description) {
+            userPrompt += `Note: ${ref.description}\n`;
+          }
+          break;
+      }
+    }
+  }
+
   const messages: LLMMessage[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
@@ -351,19 +396,62 @@ export async function updateFile(
   existingContent: string,
   changeDescription: string,
   fileType: FileType,
-  env: Env
+  env: Env,
+  hints?: FileGenerationHints
 ): Promise<GeneratedFile> {
   const systemPrompt = SYSTEM_PROMPTS[fileType] ?? DEFAULT_PROMPT;
 
-  const updatePrompt = `Here is existing code:
+  let updatePrompt = `Here is existing code:
 
 \`\`\`
 ${existingContent}
 \`\`\`
 
-Apply this change: ${changeDescription}
+Apply this change: ${changeDescription}`;
 
-Output the complete updated code.`;
+  // Format typed references into the prompt (same as generateFile)
+  if (hints?.typedReferences?.length) {
+    updatePrompt += '\n\n## Reference Material\nUse the following as context:\n';
+
+    for (const ref of hints.typedReferences) {
+      switch (ref.type) {
+        case 'component':
+          if (ref.resolved) {
+            updatePrompt += `\n### Reference Component: ${ref.resolved.name}\n`;
+            if (ref.use === 'style') {
+              updatePrompt += 'Match the visual style and CSS patterns of this component:\n';
+            } else if (ref.use === 'behavior') {
+              updatePrompt += 'Match the behavior and interaction patterns of this component:\n';
+            } else {
+              updatePrompt += 'Use this as a reference for style and behavior:\n';
+            }
+            updatePrompt += `\`\`\`tsx\n${ref.resolved.source}\n\`\`\`\n`;
+          }
+          break;
+
+        case 'css':
+          updatePrompt += '\n### Design System CSS\nFollow these styles and variables:\n';
+          const cssContent = ref.resolved?.source ?? ref.content;
+          if (cssContent) {
+            updatePrompt += `\`\`\`css\n${cssContent}\n\`\`\`\n`;
+          }
+          break;
+
+        case 'guidelines':
+          updatePrompt += '\n### Guidelines\n' + ref.content + '\n';
+          break;
+
+        case 'image':
+          updatePrompt += `\n### Visual Reference\nImage: ${ref.url}\n`;
+          if (ref.description) {
+            updatePrompt += `Description: ${ref.description}\n`;
+          }
+          break;
+      }
+    }
+  }
+
+  updatePrompt += '\n\nOutput the complete updated code.';
 
   const messages: LLMMessage[] = [
     { role: 'system', content: systemPrompt },

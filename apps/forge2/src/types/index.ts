@@ -124,6 +124,73 @@ export interface VersionProvenance {
 
   /** Original generation parameters */
   generation_params?: Record<string, unknown>;
+
+  /** References used during generation */
+  references?: GenerationReference[];
+}
+
+// =============================================================================
+// Generation References
+// =============================================================================
+
+/**
+ * Reference material for AI generation
+ * Used to provide context (design systems, examples, guidelines) to the AI
+ */
+export type GenerationReference =
+  | ComponentReference
+  | CssReference
+  | GuidelinesReference
+  | ImageReference;
+
+/**
+ * Reference to an existing component for style/behavior matching
+ */
+export interface ComponentReference {
+  type: 'component';
+  /** Component ID to reference */
+  id: string;
+  /** What to use from the component */
+  use?: 'style' | 'behavior' | 'both';
+  /** Resolved content (populated during generation) */
+  resolved?: {
+    name: string;
+    source: string;
+  };
+}
+
+/**
+ * CSS/design system reference
+ */
+export interface CssReference {
+  type: 'css';
+  /** Inline CSS content OR component ID of CSS file */
+  content?: string;
+  id?: string;
+  /** Resolved content (populated during generation) */
+  resolved?: {
+    source: string;
+  };
+}
+
+/**
+ * Text guidelines (brand guidelines, design principles, etc.)
+ */
+export interface GuidelinesReference {
+  type: 'guidelines';
+  /** Guidelines text */
+  content: string;
+}
+
+/**
+ * Image reference (design mockup, screenshot, etc.)
+ */
+export interface ImageReference {
+  type: 'image';
+  /** URL to the image */
+  url: string;
+  /** Description of what to take from this image */
+  description?: string;
 }
 
 /**
