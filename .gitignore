@@ -30,3 +30,6 @@ test_gemini.py
 reset-password.cjs
 reset-password.js
 reset-password.mjs
+
+# Archives/backups
+archive/forge-backup-*/

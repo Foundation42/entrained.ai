@@ -534,6 +534,86 @@ export class AssetService {
   }
 
   // ===========================================================================
+  // Delete Operations
+  // ===========================================================================
+
+  /**
+   * Delete an asset from all stores (R2, D1, Vectorize)
+   *
+   * This removes:
+   * - The manifest and content from R2 (source of truth)
+   * - The index entry from D1
+   * - The vector embedding from Vectorize
+   *
+   * Note: Assets are immutable, so deletion is typically only used for:
+   * - Cleanup of broken/invalid assets
+   * - Admin operations
+   * - Testing
+   */
+  async delete(id: string): Promise<{ deleted: boolean; errors: string[] }> {
+    const errors: string[] = [];
+
+    // Check if asset exists first
+    const exists = await this.r2.exists(id);
+    if (!exists) {
+      return { deleted: false, errors: ['Asset not found'] };
+    }
+
+    // Delete from Vectorize (search index)
+    try {
+      await this.vectorize.removeAsset(id);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(`Vectorize: ${msg}`);
+      // Continue with other deletions even if Vectorize fails
+    }
+
+    // Delete from D1 (queryable index)
+    try {
+      await this.d1.deleteAsset(id);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(`D1: ${msg}`);
+      // Continue with R2 deletion even if D1 fails
+    }
+
+    // Delete from R2 (source of truth) - do this last
+    try {
+      await this.r2.deleteAsset(id);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(`R2: ${msg}`);
+    }
+
+    return { deleted: errors.length === 0, errors };
+  }
+
+  /**
+   * Delete multiple assets
+   */
+  async deleteMany(ids: string[]): Promise<{
+    deleted: number;
+    failed: number;
+    errors: Array<{ id: string; error: string }>;
+  }> {
+    let deleted = 0;
+    let failed = 0;
+    const errors: Array<{ id: string; error: string }> = [];
+
+    for (const id of ids) {
+      const result = await this.delete(id);
+      if (result.deleted) {
+        deleted++;
+      } else {
+        failed++;
+        errors.push({ id, error: result.errors.join(', ') });
+      }
+    }
+
+    return { deleted, failed, errors };
+  }
+
+  // ===========================================================================
   // Private Helpers
   // ===========================================================================
 

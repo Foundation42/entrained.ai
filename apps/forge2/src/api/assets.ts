@@ -254,9 +254,133 @@ app.post('/:name/refs', async (c) => {
   return c.json({ success: true });
 });
 
+/**
+ * DELETE /api/assets/:id
+ * Delete an asset from all stores (R2, D1, Vectorize)
+ *
+ * Note: Assets are immutable, so deletion is typically only used for:
+ * - Cleanup of broken/invalid assets
+ * - Admin operations
+ */
+app.delete('/:id', async (c) => {
+  const id = c.req.param('id');
+  const baseUrl = new URL(c.req.url).origin;
+  const service = new AssetService(c.env, baseUrl);
+
+  try {
+    const result = await service.delete(id);
+
+    if (!result.deleted && result.errors.includes('Asset not found')) {
+      return c.json({ error: 'Asset not found' }, 404);
+    }
+
+    if (!result.deleted) {
+      return c.json({
+        error: 'Deletion partially failed',
+        errors: result.errors,
+      }, 500);
+    }
+
+    return c.json({ success: true, id });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Assets] Delete error:', message);
+    return c.json({ error: message }, 500);
+  }
+});
+
 // =============================================================================
 // Admin Operations
 // =============================================================================
+
+/**
+ * POST /api/assets/admin/clear-vectorize
+ * DANGER: Deletes ALL vectors from the Vectorize index.
+ * Note: This may need to be called multiple times due to eventual consistency.
+ */
+app.post('/admin/clear-vectorize', async (c) => {
+  console.log('[Admin] Starting Vectorize index clear...');
+
+  try {
+    let deleted = 0;
+    const dummyVector = new Array(768).fill(0); // Match embedding dimensions
+
+    for (let i = 0; i < 20; i++) { // Max 20 iterations
+      // Query vectors (max topK is 100)
+      const result = await c.env.VECTORIZE.query(dummyVector, {
+        topK: 100,
+        returnValues: false,
+        returnMetadata: 'none',
+      });
+
+      if (!result.matches || result.matches.length === 0) {
+        break;
+      }
+
+      // Delete the vectors by ID
+      const ids = result.matches.map(m => m.id);
+      await c.env.VECTORIZE.deleteByIds(ids);
+      deleted += ids.length;
+      console.log(`[Admin] Deleted ${deleted} vectors...`);
+    }
+
+    console.log(`[Admin] Vectorize index cleared: ${deleted} vectors deleted`);
+
+    return c.json({
+      success: true,
+      deleted,
+      note: deleted >= 2000 ? 'May need to run again - hit iteration limit' : undefined,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Admin] Vectorize clear failed:', message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+/**
+ * POST /api/assets/admin/clear-r2
+ * DANGER: Deletes ALL objects from the R2 bucket.
+ * This is a destructive operation - use with caution!
+ * Call multiple times until deleted returns 0.
+ */
+app.post('/admin/clear-r2', async (c) => {
+  console.log('[Admin] Starting R2 bucket clear...');
+
+  try {
+    let deleted = 0;
+
+    // List a small batch of objects (to avoid rate limits)
+    const listed = await c.env.ASSETS.list({ limit: 100 });
+
+    if (listed.objects.length === 0) {
+      return c.json({
+        success: true,
+        deleted: 0,
+        message: 'Bucket is empty',
+      });
+    }
+
+    // Delete each object in this batch
+    for (const obj of listed.objects) {
+      await c.env.ASSETS.delete(obj.key);
+      deleted++;
+    }
+
+    console.log(`[Admin] R2 batch cleared: ${deleted} objects deleted`);
+
+    return c.json({
+      success: true,
+      deleted,
+      hasMore: listed.truncated,
+      message: listed.truncated ? 'Call again to delete more' : 'Batch complete',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Admin] R2 clear failed:', message);
+    return c.json({ error: message }, 500);
+  }
+});
 
 /**
  * POST /api/assets/admin/reindex-dependencies
