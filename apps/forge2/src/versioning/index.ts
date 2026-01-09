@@ -31,6 +31,21 @@ export {
   extractVersionNumber,
 } from './refs';
 
+// Component ID generation (new model)
+export {
+  generateComponentId,
+  generateVersionId,
+  isComponentId,
+  isVersionId,
+  extractComponentIdFromVersionId,
+  extractVersionFromVersionId,
+  getDraftContentKey,
+  getDraftManifestKey,
+  getVersionContentKey,
+  getVersionManifestKey,
+} from './chain';
+
+// Legacy asset ID generation
 export {
   generateAssetId,
   hashContent,

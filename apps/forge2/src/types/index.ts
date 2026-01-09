@@ -6,7 +6,224 @@
  */
 
 // =============================================================================
-// Asset Types
+// Component Types (New Model)
+// =============================================================================
+
+/** Component type - same as asset type but for the new model */
+export type ComponentType = 'file' | 'bundle' | 'asset';
+
+/** Component status in the draft/publish workflow */
+export type ComponentStatus = 'draft' | 'published';
+
+/**
+ * Component - The conceptual entity (e.g., "a stopwatch component")
+ *
+ * Components are the searchable, identifiable units. Each component can have
+ * multiple versions, but only ONE vector in the search index.
+ */
+export interface Component {
+  /** Short UUID (e.g., "ebc7-4f2a") */
+  id: string;
+
+  /** AI-generated name, NOT unique (many "stopwatch" components allowed) */
+  canonical_name: string;
+
+  /** Draft or published status */
+  status: ComponentStatus;
+
+  /** Component type discriminator */
+  type: ComponentType;
+
+  /** For files: the file extension/type */
+  file_type?: FileType;
+
+  /** For media assets: the media type */
+  media_type?: MediaType;
+
+  /** Natural language description */
+  description: string;
+
+  /** Current published version number (0 = never published) */
+  latest_version: number;
+
+  /** True if there's a WIP draft */
+  has_draft: boolean;
+
+  /** Optional creator identifier (for future auth) */
+  creator?: string;
+
+  /** Creation timestamp */
+  created_at: string;
+
+  /** Last update timestamp (for draft expiry) */
+  updated_at: string;
+}
+
+/**
+ * Version - An immutable snapshot of a component
+ *
+ * Versions are created when a draft is published. They are immutable
+ * and can be referenced by version number.
+ */
+export interface Version {
+  /** Version ID: "{component_id}-v{version}" (e.g., "ebc7-4f2a-v1") */
+  id: string;
+
+  /** Parent component ID */
+  component_id: string;
+
+  /** Monotonic version number (1, 2, 3...) */
+  version: number;
+
+  /** Optional semantic version string (e.g., "1.0.0") */
+  semver?: string;
+
+  /** Parent version ID (for version chain) */
+  parent_version_id?: string;
+
+  /** Version-specific description/changelog */
+  description?: string;
+
+  /** URL to access the content */
+  content_url: string;
+
+  /** URL to the manifest */
+  manifest_url: string;
+
+  /** File size in bytes */
+  size?: number;
+
+  /** MIME type */
+  mime_type?: string;
+
+  /** Creation timestamp */
+  created_at: string;
+
+  /** Generation provenance */
+  provenance: VersionProvenance;
+
+  /** Type-specific metadata (props, css_classes, etc.) */
+  metadata: Record<string, unknown>;
+
+  /** Internal Forge component dependencies (component IDs this imports) */
+  dependencies: string[];
+}
+
+/**
+ * Version provenance - tracks how the version was created
+ */
+export interface VersionProvenance {
+  /** AI model used for generation */
+  ai_model?: string;
+
+  /** AI provider (anthropic, gemini, openai) */
+  ai_provider?: string;
+
+  /** How the version was created */
+  source_type: 'ai_generated' | 'manual' | 'import';
+
+  /** Original generation parameters */
+  generation_params?: Record<string, unknown>;
+}
+
+/**
+ * Draft - Mutable working copy of a component
+ *
+ * Drafts exist in R2 and are overwritten on each update.
+ * When published, the draft becomes a new version.
+ */
+export interface Draft {
+  /** Component this draft belongs to */
+  component_id: string;
+
+  /** URL to access draft content */
+  content_url: string;
+
+  /** URL to draft manifest */
+  manifest_url: string;
+
+  /** Preview URL for live testing */
+  preview_url?: string;
+
+  /** Last update timestamp */
+  updated_at: string;
+
+  /** Draft content (for in-memory operations) */
+  content?: string | ArrayBuffer;
+
+  /** Draft metadata */
+  metadata?: Record<string, unknown>;
+
+  /** Generation provenance for draft */
+  provenance?: VersionProvenance;
+
+  /** Dependencies extracted from draft */
+  dependencies?: string[];
+}
+
+/**
+ * Combined component with its current content (draft or latest version)
+ */
+export interface ComponentWithContent {
+  component: Component;
+  /** Draft if has_draft=true, otherwise latest published version */
+  content: Draft | Version;
+  /** Source code content */
+  source?: string;
+}
+
+/**
+ * Component with draft (returned from create/update operations)
+ */
+export interface ComponentWithDraft {
+  component: Component;
+  draft: Draft;
+  preview_url?: string;
+}
+
+/**
+ * Component with version (returned from publish operations)
+ */
+export interface ComponentWithVersion {
+  component: Component;
+  version: Version;
+}
+
+// =============================================================================
+// Component D1 Records
+// =============================================================================
+
+export interface ComponentRecord {
+  id: string;
+  canonical_name: string;
+  status: string; // ComponentStatus
+  type: string; // ComponentType
+  file_type: string | null;
+  media_type: string | null;
+  description: string;
+  latest_version: number;
+  has_draft: number; // SQLite boolean (0/1)
+  creator: string | null;
+  created_at: number; // Unix timestamp
+  updated_at: number; // Unix timestamp
+}
+
+export interface VersionRecord {
+  id: string;
+  component_id: string;
+  version: number;
+  semver: string | null;
+  parent_version_id: string | null;
+  description: string | null;
+  content_url: string;
+  manifest_url: string;
+  size: number | null;
+  mime_type: string | null;
+  created_at: number; // Unix timestamp
+}
+
+// =============================================================================
+// Legacy Asset Types (to be deprecated)
 // =============================================================================
 
 export type AssetType = 'file' | 'bundle' | 'asset';

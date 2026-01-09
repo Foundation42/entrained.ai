@@ -7,7 +7,13 @@
  *   - {id}/manifest.json: Complete metadata (can rebuild D1 from this)
  */
 
-import type { Asset, AssetManifest } from '../types';
+import type { Asset, AssetManifest, VersionProvenance } from '../types';
+import {
+  getDraftContentKey,
+  getDraftManifestKey,
+  getVersionContentKey,
+  getVersionManifestKey,
+} from '../versioning';
 
 export interface StoreAssetOptions {
   /** The asset to store */
@@ -325,4 +331,282 @@ export class R2Storage {
   private manifestKey(id: string): string {
     return `${id}/manifest.json`;
   }
+
+  // ===========================================================================
+  // Draft Operations (New Component Model)
+  // ===========================================================================
+
+  /**
+   * Store draft content and manifest for a component
+   * Drafts are mutable and can be overwritten
+   */
+  async storeDraft(options: StoreDraftOptions): Promise<DraftManifest> {
+    const { componentId, content, manifest, mimeType } = options;
+
+    const contentKey = getDraftContentKey(componentId);
+    const manifestKey = getDraftManifestKey(componentId);
+
+    // Store content (without immutable caching - drafts can be overwritten)
+    await this.bucket.put(contentKey, content, {
+      httpMetadata: {
+        contentType: mimeType ?? 'application/octet-stream',
+        cacheControl: 'no-cache', // Drafts can change
+      },
+      customMetadata: {
+        component_id: componentId,
+        is_draft: 'true',
+      },
+    });
+
+    // Build draft manifest
+    const draftManifest: DraftManifest = {
+      ...manifest,
+      component_id: componentId,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Store manifest
+    await this.bucket.put(manifestKey, JSON.stringify(draftManifest, null, 2), {
+      httpMetadata: {
+        contentType: 'application/json',
+        cacheControl: 'no-cache',
+      },
+    });
+
+    return draftManifest;
+  }
+
+  /**
+   * Get draft content for a component
+   */
+  async getDraftContent(componentId: string): Promise<ArrayBuffer | null> {
+    const contentKey = getDraftContentKey(componentId);
+    const object = await this.bucket.get(contentKey);
+    return object ? object.arrayBuffer() : null;
+  }
+
+  /**
+   * Get draft content as text
+   */
+  async getDraftContentAsText(componentId: string): Promise<string | null> {
+    const contentKey = getDraftContentKey(componentId);
+    const object = await this.bucket.get(contentKey);
+    return object ? object.text() : null;
+  }
+
+  /**
+   * Get draft manifest for a component
+   */
+  async getDraftManifest(componentId: string): Promise<DraftManifest | null> {
+    const manifestKey = getDraftManifestKey(componentId);
+    const object = await this.bucket.get(manifestKey);
+
+    if (!object) {
+      return null;
+    }
+
+    const text = await object.text();
+    return JSON.parse(text) as DraftManifest;
+  }
+
+  /**
+   * Check if a draft exists
+   */
+  async draftExists(componentId: string): Promise<boolean> {
+    const contentKey = getDraftContentKey(componentId);
+    const head = await this.bucket.head(contentKey);
+    return head !== null;
+  }
+
+  /**
+   * Delete a draft
+   */
+  async deleteDraft(componentId: string): Promise<void> {
+    const contentKey = getDraftContentKey(componentId);
+    const manifestKey = getDraftManifestKey(componentId);
+
+    await Promise.all([
+      this.bucket.delete(contentKey),
+      this.bucket.delete(manifestKey),
+    ]);
+  }
+
+  // ===========================================================================
+  // Version Operations (New Component Model)
+  // ===========================================================================
+
+  /**
+   * Store a published version
+   * Versions are immutable once published
+   */
+  async storeVersion(options: StoreVersionOptions): Promise<VersionManifest> {
+    const { componentId, version, content, manifest, mimeType } = options;
+
+    const contentKey = getVersionContentKey(componentId, version);
+    const manifestKey = getVersionManifestKey(componentId, version);
+
+    // Store content (with immutable caching - versions never change)
+    await this.bucket.put(contentKey, content, {
+      httpMetadata: {
+        contentType: mimeType ?? 'application/octet-stream',
+        cacheControl: 'public, max-age=31536000, immutable',
+      },
+      customMetadata: {
+        component_id: componentId,
+        version: version.toString(),
+      },
+    });
+
+    // Build version manifest
+    const versionManifest: VersionManifest = {
+      ...manifest,
+      component_id: componentId,
+      version,
+      created_at: new Date().toISOString(),
+    };
+
+    // Store manifest
+    await this.bucket.put(manifestKey, JSON.stringify(versionManifest, null, 2), {
+      httpMetadata: {
+        contentType: 'application/json',
+        cacheControl: 'public, max-age=31536000, immutable',
+      },
+    });
+
+    return versionManifest;
+  }
+
+  /**
+   * Get version content
+   */
+  async getVersionContent(componentId: string, version: number): Promise<ArrayBuffer | null> {
+    const contentKey = getVersionContentKey(componentId, version);
+    const object = await this.bucket.get(contentKey);
+    return object ? object.arrayBuffer() : null;
+  }
+
+  /**
+   * Get version content as text
+   */
+  async getVersionContentAsText(componentId: string, version: number): Promise<string | null> {
+    const contentKey = getVersionContentKey(componentId, version);
+    const object = await this.bucket.get(contentKey);
+    return object ? object.text() : null;
+  }
+
+  /**
+   * Get version manifest
+   */
+  async getVersionManifest(componentId: string, version: number): Promise<VersionManifest | null> {
+    const manifestKey = getVersionManifestKey(componentId, version);
+    const object = await this.bucket.get(manifestKey);
+
+    if (!object) {
+      return null;
+    }
+
+    const text = await object.text();
+    return JSON.parse(text) as VersionManifest;
+  }
+
+  /**
+   * Check if a version exists
+   */
+  async versionExists(componentId: string, version: number): Promise<boolean> {
+    const contentKey = getVersionContentKey(componentId, version);
+    const head = await this.bucket.head(contentKey);
+    return head !== null;
+  }
+
+  /**
+   * Delete a component and all its data (draft + all versions)
+   */
+  async deleteComponent(componentId: string): Promise<void> {
+    // List all objects with this component prefix
+    const prefix = `${componentId}/`;
+    let cursor: string | undefined;
+
+    do {
+      const listed = await this.bucket.list({ prefix, cursor });
+
+      // Delete all objects in this batch
+      for (const obj of listed.objects) {
+        await this.bucket.delete(obj.key);
+      }
+
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
+
+  // ===========================================================================
+  // Component URL Generation
+  // ===========================================================================
+
+  /**
+   * Generate URL for draft content
+   */
+  draftContentUrl(componentId: string, baseUrl: string): string {
+    return `${baseUrl}/api/components/${componentId}/draft/content`;
+  }
+
+  /**
+   * Generate URL for draft manifest
+   */
+  draftManifestUrl(componentId: string, baseUrl: string): string {
+    return `${baseUrl}/api/components/${componentId}/draft`;
+  }
+
+  /**
+   * Generate URL for version content
+   */
+  versionContentUrl(componentId: string, version: number, baseUrl: string): string {
+    return `${baseUrl}/api/components/${componentId}/versions/${version}/content`;
+  }
+
+  /**
+   * Generate URL for version manifest
+   */
+  versionManifestUrl(componentId: string, version: number, baseUrl: string): string {
+    return `${baseUrl}/api/components/${componentId}/versions/${version}`;
+  }
+}
+
+// ===========================================================================
+// Component Storage Interfaces
+// ===========================================================================
+
+export interface StoreDraftOptions {
+  componentId: string;
+  content: ArrayBuffer | string | ReadableStream;
+  manifest: Omit<DraftManifest, 'component_id' | 'updated_at'>;
+  mimeType?: string;
+}
+
+export interface StoreVersionOptions {
+  componentId: string;
+  version: number;
+  content: ArrayBuffer | string | ReadableStream;
+  manifest: Omit<VersionManifest, 'component_id' | 'version' | 'created_at'>;
+  mimeType?: string;
+}
+
+export interface DraftManifest {
+  component_id: string;
+  description: string;
+  updated_at: string;
+  provenance?: VersionProvenance;
+  metadata?: Record<string, unknown>;
+  dependencies?: string[];
+  embedding?: number[];
+}
+
+export interface VersionManifest {
+  component_id: string;
+  version: number;
+  description?: string;
+  created_at: string;
+  provenance?: VersionProvenance;
+  metadata?: Record<string, unknown>;
+  dependencies?: string[];
+  embedding?: number[];
 }

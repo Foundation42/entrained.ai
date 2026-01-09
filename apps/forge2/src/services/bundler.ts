@@ -349,6 +349,127 @@ export class BundlerService {
   }
 
   /**
+   * Create a bundle from raw source code
+   * Useful for bundling draft content that isn't stored as an asset yet
+   */
+  async bundleFromSource(input: {
+    name: string;
+    description?: string;
+    source: string;
+    fileType: string;
+    cssId?: string;
+    demoProps?: Record<string, unknown>;
+  }): Promise<BundleOutput> {
+    const { name, source, fileType, cssId, demoProps } = input;
+    console.log(`[Bundler] Creating bundle from source: ${name}`);
+
+    // Create a resolved file from the source
+    const resolvedFiles: ResolvedFile[] = [{
+      ref: name,
+      id: name,
+      canonical_name: name,
+      content: source,
+      fileType,
+    }];
+
+    // If CSS ID provided, resolve and include it
+    if (cssId) {
+      try {
+        const cssManifest = await this.assetService.resolve(cssId);
+        if (cssManifest) {
+          const cssContent = await this.assetService.getContentAsText(cssManifest.id);
+          if (cssContent) {
+            resolvedFiles.push({
+              ref: cssId,
+              id: cssManifest.id,
+              canonical_name: cssManifest.canonical_name,
+              content: cssContent,
+              fileType: 'css',
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`[Bundler] Error resolving CSS ${cssId}:`, error);
+      }
+    }
+
+    // Detect CDN libraries
+    const detectedLibraries = detectCdnLibraries(resolvedFiles);
+    console.log(`[Bundler] Detected ${detectedLibraries.length} CDN libraries`);
+
+    // Build virtual FS
+    const fs: Record<string, string> = {};
+    for (const file of resolvedFiles) {
+      const ext = file.fileType || 'ts';
+      const path = `/${file.id}.${ext}`;
+      fs[path] = file.content;
+    }
+
+    const entry = `/${name}.${fileType}`;
+
+    // Build externals
+    const externals = ['react', 'react-dom', ...detectedLibraries];
+    const externalGlobals: Record<string, string> = {};
+    for (const libName of detectedLibraries) {
+      const lib = getCdnLibrary(libName);
+      if (lib) {
+        externalGlobals[libName] = lib.globalName;
+      }
+    }
+
+    // Call bundler container
+    const stub = this.getBundlerStub();
+    const bundleResponse = await stub.fetch('http://container/bundle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        files: fs,
+        entry,
+        format: 'iife',
+        minify: true,
+        external: externals,
+        externalGlobals,
+      }),
+    });
+
+    if (!bundleResponse.ok) {
+      const errorText = await bundleResponse.text();
+      throw new Error(`Bundle failed: ${errorText}`);
+    }
+
+    const bundleResult = await bundleResponse.json() as ContainerBundleResponse;
+    console.log(`[Bundler] Bundle complete: ${bundleResult.js.length} bytes JS, ${bundleResult.buildTimeMs}ms`);
+
+    // Collect standalone CSS
+    const standaloneCss = resolvedFiles
+      .filter(f => f.fileType === 'css')
+      .map(f => f.content)
+      .join('\n\n');
+
+    const combinedCss = [bundleResult.css, standaloneCss].filter(Boolean).join('\n\n');
+
+    // Generate HTML
+    const html = this.generateHTML({
+      title: name,
+      js: bundleResult.js,
+      css: combinedCss,
+      assets: [],
+      demoProps: demoProps ?? {},
+      cdnLibraries: detectedLibraries,
+    });
+
+    return {
+      html,
+      js: bundleResult.js,
+      css: combinedCss,
+      resolvedFiles,
+      resolvedAssets: [],
+      warnings: bundleResult.warnings,
+      buildTimeMs: bundleResult.buildTimeMs,
+    };
+  }
+
+  /**
    * Create a bundle from file references
    */
   async bundle(input: BundleInput): Promise<BundleOutput> {

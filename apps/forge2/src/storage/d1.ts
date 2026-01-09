@@ -12,6 +12,12 @@ import type {
   AssetType,
   FileType,
   VersionRefRecord,
+  Component,
+  ComponentRecord,
+  ComponentType,
+  ComponentStatus,
+  Version,
+  VersionRecord,
 } from '../types';
 
 export interface ListAssetsOptions {
@@ -396,4 +402,356 @@ export class D1Storage {
     // Delete the asset
     await this.db.prepare('DELETE FROM assets WHERE id = ?').bind(id).run();
   }
+
+  // ===========================================================================
+  // Component Operations (New Model)
+  // ===========================================================================
+
+  /**
+   * Create a new component
+   */
+  async createComponent(component: Component): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO components (
+          id, canonical_name, status, type, file_type, media_type,
+          description, latest_version, has_draft, creator, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        component.id,
+        component.canonical_name,
+        component.status,
+        component.type,
+        component.file_type ?? null,
+        component.media_type ?? null,
+        component.description,
+        component.latest_version,
+        component.has_draft ? 1 : 0,
+        component.creator ?? null,
+        new Date(component.created_at).getTime(),
+        new Date(component.updated_at).getTime()
+      )
+      .run();
+  }
+
+  /**
+   * Get a component by ID
+   */
+  async getComponent(id: string): Promise<ComponentRecord | null> {
+    const result = await this.db
+      .prepare('SELECT * FROM components WHERE id = ?')
+      .bind(id)
+      .first<ComponentRecord>();
+
+    return result ?? null;
+  }
+
+  /**
+   * Update a component's draft status and updated_at timestamp
+   */
+  async updateComponentDraft(
+    id: string,
+    hasDraft: boolean,
+    description?: string
+  ): Promise<void> {
+    const now = Date.now();
+
+    if (description !== undefined) {
+      await this.db
+        .prepare(
+          `UPDATE components
+           SET has_draft = ?, updated_at = ?, description = ?
+           WHERE id = ?`
+        )
+        .bind(hasDraft ? 1 : 0, now, description, id)
+        .run();
+    } else {
+      await this.db
+        .prepare(
+          `UPDATE components
+           SET has_draft = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .bind(hasDraft ? 1 : 0, now, id)
+        .run();
+    }
+  }
+
+  /**
+   * Publish a component (update status, latest_version, has_draft)
+   */
+  async publishComponent(
+    id: string,
+    version: number,
+    description?: string
+  ): Promise<void> {
+    const now = Date.now();
+
+    if (description !== undefined) {
+      await this.db
+        .prepare(
+          `UPDATE components
+           SET status = 'published', latest_version = ?, has_draft = 0, updated_at = ?, description = ?
+           WHERE id = ?`
+        )
+        .bind(version, now, description, id)
+        .run();
+    } else {
+      await this.db
+        .prepare(
+          `UPDATE components
+           SET status = 'published', latest_version = ?, has_draft = 0, updated_at = ?
+           WHERE id = ?`
+        )
+        .bind(version, now, id)
+        .run();
+    }
+  }
+
+  /**
+   * List components with filtering
+   */
+  async listComponents(options: ListComponentsOptions = {}): Promise<ComponentRecord[]> {
+    const {
+      status,
+      type,
+      file_type,
+      media_type,
+      limit = 50,
+      offset = 0,
+      order_by = 'created_at',
+      order_dir = 'desc',
+    } = options;
+
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+
+    if (type) {
+      conditions.push('type = ?');
+      params.push(type);
+    }
+
+    if (file_type) {
+      conditions.push('file_type = ?');
+      params.push(file_type);
+    }
+
+    if (media_type) {
+      conditions.push('media_type = ?');
+      params.push(media_type);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const order = `ORDER BY ${order_by} ${order_dir.toUpperCase()}`;
+
+    const query = `SELECT * FROM components ${where} ${order} LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+
+    const result = await this.db
+      .prepare(query)
+      .bind(...params)
+      .all<ComponentRecord>();
+
+    return result.results;
+  }
+
+  /**
+   * List published components only
+   */
+  async listPublishedComponents(
+    options: Omit<ListComponentsOptions, 'status'> = {}
+  ): Promise<ComponentRecord[]> {
+    return this.listComponents({ ...options, status: 'published' });
+  }
+
+  /**
+   * Delete a component and all its versions
+   */
+  async deleteComponent(id: string): Promise<void> {
+    // Delete all versions first (due to foreign key)
+    await this.db
+      .prepare('DELETE FROM versions WHERE component_id = ?')
+      .bind(id)
+      .run();
+
+    // Delete the component
+    await this.db
+      .prepare('DELETE FROM components WHERE id = ?')
+      .bind(id)
+      .run();
+  }
+
+  /**
+   * Find components with expired drafts (for cleanup)
+   */
+  async findExpiredDrafts(maxAgeMs: number): Promise<ComponentRecord[]> {
+    const cutoff = Date.now() - maxAgeMs;
+
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM components
+         WHERE has_draft = 1 AND updated_at < ?`
+      )
+      .bind(cutoff)
+      .all<ComponentRecord>();
+
+    return result.results;
+  }
+
+  // ===========================================================================
+  // Version Operations (New Model)
+  // ===========================================================================
+
+  /**
+   * Create a new version record
+   */
+  async createVersion(version: Version): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO versions (
+          id, component_id, version, semver, parent_version_id,
+          description, content_url, manifest_url, size, mime_type, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        version.id,
+        version.component_id,
+        version.version,
+        version.semver ?? null,
+        version.parent_version_id ?? null,
+        version.description ?? null,
+        version.content_url,
+        version.manifest_url,
+        version.size ?? null,
+        version.mime_type ?? null,
+        new Date(version.created_at).getTime()
+      )
+      .run();
+  }
+
+  /**
+   * Get a version by ID
+   */
+  async getVersion(id: string): Promise<VersionRecord | null> {
+    const result = await this.db
+      .prepare('SELECT * FROM versions WHERE id = ?')
+      .bind(id)
+      .first<VersionRecord>();
+
+    return result ?? null;
+  }
+
+  /**
+   * Get the latest version for a component
+   */
+  async getLatestVersion(componentId: string): Promise<VersionRecord | null> {
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM versions
+         WHERE component_id = ?
+         ORDER BY version DESC
+         LIMIT 1`
+      )
+      .bind(componentId)
+      .first<VersionRecord>();
+
+    return result ?? null;
+  }
+
+  /**
+   * Get a specific version by component ID and version number
+   */
+  async getVersionByNumber(
+    componentId: string,
+    versionNumber: number
+  ): Promise<VersionRecord | null> {
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM versions
+         WHERE component_id = ? AND version = ?`
+      )
+      .bind(componentId, versionNumber)
+      .first<VersionRecord>();
+
+    return result ?? null;
+  }
+
+  /**
+   * Get all versions for a component (ordered by version DESC)
+   */
+  async getVersionHistory(componentId: string): Promise<VersionRecord[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM versions
+         WHERE component_id = ?
+         ORDER BY version DESC`
+      )
+      .bind(componentId)
+      .all<VersionRecord>();
+
+    return result.results;
+  }
+
+  /**
+   * Count components matching criteria
+   */
+  async countComponents(
+    options: Omit<ListComponentsOptions, 'limit' | 'offset'>
+  ): Promise<number> {
+    const { status, type, file_type, media_type } = options;
+
+    const conditions: string[] = [];
+    const params: string[] = [];
+
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+
+    if (type) {
+      conditions.push('type = ?');
+      params.push(type);
+    }
+
+    if (file_type) {
+      conditions.push('file_type = ?');
+      params.push(file_type);
+    }
+
+    if (media_type) {
+      conditions.push('media_type = ?');
+      params.push(media_type);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const query = `SELECT COUNT(*) as count FROM components ${where}`;
+
+    const result = await this.db
+      .prepare(query)
+      .bind(...params)
+      .first<{ count: number }>();
+
+    return result?.count ?? 0;
+  }
+}
+
+// ===========================================================================
+// Options Interfaces
+// ===========================================================================
+
+export interface ListComponentsOptions {
+  status?: ComponentStatus;
+  type?: ComponentType;
+  file_type?: string;
+  media_type?: string;
+  limit?: number;
+  offset?: number;
+  order_by?: 'created_at' | 'updated_at' | 'latest_version';
+  order_dir?: 'asc' | 'desc';
 }

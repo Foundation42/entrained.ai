@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { AssetService } from '../services/assets';
+import { ComponentService } from '../services/components';
 import { BundlerService } from '../services/bundler';
 import {
   generateFile,
@@ -18,7 +19,6 @@ import {
   speechRequestToOptions,
   generateCssForComponent,
   parseSource,
-  generateCanonicalName,
   getMimeType,
   generateCompletion,
 } from '../generation';
@@ -47,11 +47,12 @@ app.get('/about', (c) => {
         forge_get_types: 'Get TypeScript definitions',
       },
       creation: {
-        forge_create: 'Create new component (AI generates code) → returns preview_url',
-        forge_upload: 'Upload YOUR code directly (no AI) → returns preview_url',
-        forge_update: 'Modify via natural language (AI) → returns preview_url',
-        forge_update_source: 'Replace/patch source directly → returns preview_url (supports edits array!)',
-        forge_upload_update: 'Update with your code (no AI) → returns preview_url',
+        forge_create: 'Create new component DRAFT (AI generates code) → returns preview_url, NOT searchable yet',
+        forge_upload: 'Upload YOUR code directly (no AI) → creates DRAFT with preview_url',
+        forge_update: 'Modify draft via natural language (AI) → overwrites draft, returns preview_url',
+        forge_update_source: 'Replace/patch draft source directly → returns preview_url (supports edits array!)',
+        forge_upload_update: 'Update draft with your code (no AI) → returns preview_url',
+        forge_publish: 'Publish draft → creates immutable version, NOW searchable via forge_search',
         forge_retranspile: 'Verify component validity',
         forge_compose: 'Bundle multiple files into deployable HTML',
         forge_debug: 'Diagnose component issues',
@@ -72,15 +73,33 @@ app.get('/about', (c) => {
       bundle: 'Composed applications (HTML bundles)',
     },
 
-    versioning: {
-      description: 'All assets are immutable with semantic versioning',
-      format: '{canonical-name}-v{major}-{hash}',
-      resolution: [
-        '@latest - Most recent version',
-        '@stable - Latest stable tag',
-        '@^1.0 - SemVer range',
-        'exact-id - Specific version',
+    workflow: {
+      description: 'Draft/Publish workflow for components',
+      steps: [
+        '1. forge_create → Creates draft (not searchable, has preview_url)',
+        '2. forge_update → Updates draft (overwrites, still not searchable)',
+        '3. forge_publish → Publishes draft → version 1 (NOW searchable)',
+        '4. forge_update on published → Creates draft for next version',
+        '5. forge_publish → Publishes as version 2, 3, etc.',
       ],
+      key_points: [
+        'Drafts are NOT searchable - iterate freely without polluting search',
+        'preview_url works immediately for live testing',
+        'Publish when ready to make component discoverable',
+        'Each publish creates immutable version (v1, v2, ...)',
+      ],
+    },
+
+    versioning: {
+      description: 'Components use draft/publish versioning',
+      format: {
+        component_id: 'Short UUID like "ebc7-4f2a"',
+        version_id: '"ebc7-4f2a-v1", "ebc7-4f2a-v2", etc.',
+      },
+      states: {
+        draft: 'Mutable, not searchable, has preview_url',
+        published: 'Immutable versions, searchable via forge_search',
+      },
     },
 
     generation: {
@@ -133,11 +152,13 @@ app.get('/about', (c) => {
     },
 
     bestPractices: [
-      'Search for existing assets before creating new ones',
+      'Search for existing components before creating new ones (forge_search only returns PUBLISHED)',
       'Use forge_get_manifest to understand component interfaces',
       'Use edits array in forge_update_source for small changes (more efficient than full source)',
-      'All create/update tools return preview_url - no need to forge_compose for single components!',
+      'All create/update tools return preview_url - test before publishing!',
       'Use forge_upload when YOU write the code, forge_create when you want AI to generate it',
+      'Iterate on drafts freely - they dont pollute search results',
+      'Call forge_publish when component is ready to be discoverable',
       'Asset generation is cached - same inputs return cached results',
       'External libraries (Three.js, D3, GSAP, etc.) are auto-loaded from CDN - just import them!',
     ],
@@ -185,16 +206,13 @@ app.post('/upload', async (c) => {
   }
 
   const baseUrl = new URL(c.req.url).origin;
-  const service = new AssetService(c.env, baseUrl);
+  const componentService = new ComponentService(c.env, baseUrl);
+  const assetService = new AssetService(c.env, baseUrl);
 
   try {
     // Parse source to extract metadata
     const parsed = parseSource(source, file_type);
     console.log(`[ForgeAPI] Parsed source: ${parsed.lines} lines, ${parsed.characters} chars`);
-
-    // Generate canonical name from source if not provided
-    const canonical_name = generateCanonicalName(source, file_type, name);
-    console.log(`[ForgeAPI] Canonical name: ${canonical_name}`);
 
     // Build metadata from parsed source
     const metadata: Record<string, unknown> = {
@@ -209,9 +227,6 @@ app.post('/upload', async (c) => {
       metadata.exports = parsed.tsx.exports;
       metadata.demo_props = parsed.tsx.demo_props;
       console.log(`[ForgeAPI] TSX metadata: ${parsed.tsx.props.length} props, ${parsed.tsx.css_classes.length} css_classes, ${parsed.tsx.dependencies.length} dependencies`);
-      if (parsed.tsx.dependencies.length > 0) {
-        console.log(`[ForgeAPI] Dependencies: ${parsed.tsx.dependencies.join(', ')}`);
-      }
     }
 
     // Add CSS-specific metadata
@@ -219,15 +234,14 @@ app.post('/upload', async (c) => {
       metadata.classes_defined = parsed.css.classes_defined;
       metadata.variables_defined = parsed.css.variables_defined;
       metadata.keyframes_defined = parsed.css.keyframes_defined;
-      console.log(`[ForgeAPI] CSS metadata: ${parsed.css.classes_defined.length} classes`);
     }
 
-    // Create the asset with dependencies extracted from source
-    const manifest = await service.create({
-      name: canonical_name,
+    // Create component draft using ComponentService
+    const result = await componentService.create({
+      name,
       type: 'file',
-      file_type: file_type,
-      description: description || `Uploaded ${file_type} file: ${canonical_name}`,
+      file_type,
+      description: description || `Uploaded ${file_type} file`,
       content: source,
       mime_type: getMimeType(file_type),
       provenance: {
@@ -239,14 +253,13 @@ app.post('/upload', async (c) => {
         },
       },
       metadata,
-      // Pass extracted Forge component dependencies
       dependencies: parsed.tsx?.dependencies ?? [],
     });
 
-    console.log(`[ForgeAPI] Created asset: ${manifest.id}`);
+    console.log(`[ForgeAPI] Created component draft: ${result.component.id}`);
 
-    // Auto-generate CSS for TSX components if requested
-    let cssManifest: Awaited<ReturnType<typeof service.create>> | null = null;
+    // Auto-generate CSS for TSX components if requested (stored as legacy asset for now)
+    let cssInfo: { id: string; content_url: string } | undefined;
     const css_classes = parsed.tsx?.css_classes;
 
     if (generate_css && (file_type === 'tsx' || file_type === 'jsx') && css_classes && css_classes.length > 0) {
@@ -254,17 +267,17 @@ app.post('/upload', async (c) => {
       try {
         const cssResult = await generateCssForComponent(
           css_classes,
-          description || canonical_name,
+          description || result.component.canonical_name,
           style,
           c.env
         );
 
-        const cssBaseName = canonical_name.slice(0, 40);
-        cssManifest = await service.create({
+        const cssBaseName = result.component.canonical_name.slice(0, 40);
+        const cssManifest = await assetService.create({
           name: `${cssBaseName}-css`,
           type: 'file',
           file_type: 'css',
-          description: `Styles for: ${canonical_name}`,
+          description: `Styles for: ${result.component.canonical_name}`,
           content: cssResult.content,
           mime_type: 'text/css',
           provenance: {
@@ -272,18 +285,19 @@ app.post('/upload', async (c) => {
             ai_provider: cssResult.provider,
             source_type: 'ai_generated',
             generation_params: {
-              component_id: manifest.id,
+              component_id: result.component.id,
               css_classes,
               style,
             },
           },
           metadata: {
-            component_id: manifest.id,
+            component_id: result.component.id,
             classes_defined: cssResult.classes_defined,
             variables_defined: cssResult.variables_defined,
             keyframes_defined: cssResult.keyframes_defined,
           },
         });
+        cssInfo = { id: cssManifest.id, content_url: cssManifest.content_url };
         console.log(`[ForgeAPI] Created CSS: ${cssManifest.id}`);
       } catch (cssError) {
         const errMsg = cssError instanceof Error ? cssError.message : String(cssError);
@@ -298,41 +312,41 @@ app.post('/upload', async (c) => {
         console.log('[ForgeAPI] Generating preview bundle...');
         const bundler = new BundlerService(c.env, baseUrl);
 
-        const filesToBundle = [manifest.id];
-        if (cssManifest) {
-          filesToBundle.push(cssManifest.id);
-        }
+        // Get draft content for bundling
+        const draftContent = await componentService.getDraftContent(result.component.id);
+        if (draftContent) {
+          const bundleResult = await bundler.bundleFromSource({
+            name: `${result.component.canonical_name.slice(0, 40)}-demo`,
+            description: `Preview: ${description || result.component.canonical_name}`,
+            source: draftContent,
+            fileType: file_type,
+            cssId: cssInfo?.id,
+          });
 
-        const bundleName = canonical_name.slice(0, 40);
-        const bundleResult = await bundler.bundle({
-          name: `${bundleName}-demo`,
-          description: `Preview: ${description || canonical_name}`,
-          files: filesToBundle,
-        });
-
-        const previewManifest = await service.create({
-          name: `${bundleName}-demo`,
-          type: 'bundle',
-          description: `Preview: ${description || canonical_name}`,
-          content: bundleResult.html,
-          mime_type: 'text/html',
-          provenance: {
-            source_type: 'manual',
-            generation_params: {
-              component_id: manifest.id,
-              css_id: cssManifest?.id,
-              bundle_type: 'preview',
+          const previewManifest = await assetService.create({
+            name: `${result.component.canonical_name.slice(0, 40)}-demo`,
+            type: 'bundle',
+            description: `Preview: ${description || result.component.canonical_name}`,
+            content: bundleResult.html,
+            mime_type: 'text/html',
+            provenance: {
+              source_type: 'manual',
+              generation_params: {
+                component_id: result.component.id,
+                css_id: cssInfo?.id,
+                bundle_type: 'preview',
+              },
             },
-          },
-          metadata: {
-            component_id: manifest.id,
-            css_id: cssManifest?.id,
-            build_time_ms: bundleResult.buildTimeMs,
-          },
-        });
+            metadata: {
+              component_id: result.component.id,
+              css_id: cssInfo?.id,
+              build_time_ms: bundleResult.buildTimeMs,
+            },
+          });
 
-        previewUrl = previewManifest.content_url;
-        console.log(`[ForgeAPI] Preview created: ${previewManifest.id}`);
+          previewUrl = previewManifest.content_url;
+          console.log(`[ForgeAPI] Preview created: ${previewManifest.id}`);
+        }
       } catch (previewError) {
         const errMsg = previewError instanceof Error ? previewError.message : String(previewError);
         console.error('[ForgeAPI] Preview generation failed:', errMsg);
@@ -340,14 +354,17 @@ app.post('/upload', async (c) => {
     }
 
     return c.json({
-      id: manifest.id,
-      name: manifest.canonical_name,
-      version: manifest.version,
-      description: manifest.description,
+      // New component model fields
+      component_id: result.component.id,
+      id: result.component.id, // Backwards compatibility
+      name: result.component.canonical_name,
+      status: result.component.status,
+      has_draft: result.component.has_draft,
+      description: result.component.description,
       file_type,
-      source_url: `${baseUrl}/api/forge/${manifest.id}/source`,
-      content_url: manifest.content_url,
-      preview_url: previewUrl,
+      source_url: `${baseUrl}/api/forge/${result.component.id}/source`,
+      content_url: result.draft?.content_url,
+      preview_url: previewUrl || result.preview_url,
       // Extracted metadata
       props: parsed.tsx?.props,
       css_classes: parsed.tsx?.css_classes,
@@ -355,10 +372,7 @@ app.post('/upload', async (c) => {
       demo_props: parsed.tsx?.demo_props,
       dependencies: parsed.tsx?.dependencies ?? [],
       // CSS info if generated
-      css: cssManifest ? {
-        id: cssManifest.id,
-        content_url: cssManifest.content_url,
-      } : undefined,
+      css: cssInfo,
     }, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -557,36 +571,50 @@ app.put('/upload/:id', async (c) => {
 
 /**
  * GET /api/forge/search
- * Search for components/files by natural language
+ * Search for PUBLISHED components by natural language
+ * Note: Drafts are NOT searchable - only published components appear here
  */
 app.get('/search', async (c) => {
   const query = c.req.query('q');
   const limit = parseInt(c.req.query('limit') || '10');
+  const type = c.req.query('type') as 'file' | 'bundle' | 'asset' | undefined;
+  const file_type = c.req.query('file_type');
 
   if (!query) {
     return c.json({ error: 'Query parameter q is required' }, 400);
   }
 
   const baseUrl = new URL(c.req.url).origin;
-  const service = new AssetService(c.env, baseUrl);
+  const componentService = new ComponentService(c.env, baseUrl);
 
   try {
-    // Search all assets (filtering can be done client-side if needed)
-    const results = await service.search({ query, limit });
+    // Search only published components (drafts not included)
+    const results = await componentService.search({
+      query,
+      limit,
+      type,
+      file_type,
+    });
 
     // Map to forge-style response
     const components = results.map(r => ({
-      id: r.id,
-      name: r.canonical_name,
-      description: r.description,
-      version: r.version,
-      file_type: r.file_type,
+      component_id: r.component_id,
+      id: r.component_id, // Backwards compatibility
+      name: r.metadata.canonical_name,
+      description: r.metadata.description,
+      type: r.metadata.type,
+      file_type: r.metadata.file_type,
+      latest_version: r.metadata.latest_version,
       score: r.score,
-      url: r.url,
-      metadata: r.metadata,
+      url: `${baseUrl}/api/components/${r.component_id}`,
     }));
 
-    return c.json({ components, query, count: components.length });
+    return c.json({
+      components,
+      query,
+      count: components.length,
+      note: 'Only published components are searchable. Use forge_publish to make a draft discoverable.',
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return c.json({ error: message }, 500);
@@ -702,7 +730,8 @@ export default function ${manifest.canonical_name.replace(/-/g, '')}(props: Prop
 
 /**
  * POST /api/forge/create
- * Create a new component from description
+ * Create a new component DRAFT from description
+ * The component is NOT searchable until forge_publish is called
  * Automatically generates matching CSS for the component's css_classes
  */
 app.post('/create', async (c) => {
@@ -723,50 +752,51 @@ app.post('/create', async (c) => {
   }
 
   const baseUrl = new URL(c.req.url).origin;
-  const service = new AssetService(c.env, baseUrl);
+  const componentService = new ComponentService(c.env, baseUrl);
+  const assetService = new AssetService(c.env, baseUrl);
 
   try {
-    // Generate TSX file
-    const result = await generateFile(description, 'tsx', { style: hints?.style }, c.env);
+    // Generate TSX file using AI
+    const generated = await generateFile(description, 'tsx', { style: hints?.style }, c.env);
 
-    // Store TSX as asset
-    const manifest = await service.create({
-      name: result.canonical_name || 'component',
+    // Create component draft using ComponentService
+    const createResult = await componentService.create({
+      name: generated.canonical_name,
       type: 'file',
       file_type: 'tsx',
       description,
-      content: result.content,
+      content: generated.content,
       mime_type: 'text/typescript',
       provenance: {
-        ai_model: result.model,
-        ai_provider: result.provider,
+        ai_model: generated.model,
+        ai_provider: generated.provider,
         source_type: 'ai_generated',
         generation_params: { description, hints },
       },
       metadata: {
-        demo_props: result.demo_props,
-        props: result.props,
-        css_classes: result.css_classes,
-        exports: result.exports,
+        demo_props: generated.demo_props,
+        props: generated.props,
+        css_classes: generated.css_classes,
+        exports: generated.exports,
       },
     });
 
-    // Auto-generate CSS if component has css_classes
-    let cssManifest: Awaited<ReturnType<typeof service.create>> | null = null;
-    if (result.css_classes && result.css_classes.length > 0) {
-      console.log(`[ForgeAPI] Auto-generating CSS for ${result.css_classes.length} classes: ${result.css_classes.slice(0, 5).join(', ')}`);
+    console.log(`[ForgeAPI] Created component draft: ${createResult.component.id}`);
+
+    // Auto-generate CSS if component has css_classes (stored as legacy asset for now)
+    let cssInfo: { id: string; content_url: string } | undefined;
+    if (generated.css_classes && generated.css_classes.length > 0) {
+      console.log(`[ForgeAPI] Auto-generating CSS for ${generated.css_classes.length} classes`);
       try {
         const cssResult = await generateCssForComponent(
-          result.css_classes,
+          generated.css_classes,
           description,
           hints?.style,
           c.env
         );
-        console.log(`[ForgeAPI] CSS generated: ${cssResult.content.length} bytes`);
 
-        // Store CSS as asset linked to the component (truncate name to avoid ID length issues)
-        const cssBaseName = (result.canonical_name || 'component').slice(0, 40);
-        cssManifest = await service.create({
+        const cssBaseName = createResult.component.canonical_name.slice(0, 40);
+        const cssManifest = await assetService.create({
           name: `${cssBaseName}-css`,
           type: 'file',
           file_type: 'css',
@@ -778,53 +808,42 @@ app.post('/create', async (c) => {
             ai_provider: cssResult.provider,
             source_type: 'ai_generated',
             generation_params: {
-              component_id: manifest.id,
-              css_classes: result.css_classes,
+              component_id: createResult.component.id,
+              css_classes: generated.css_classes,
               style: hints?.style,
             },
           },
           metadata: {
-            component_id: manifest.id,
+            component_id: createResult.component.id,
             classes_defined: cssResult.classes_defined,
             variables_defined: cssResult.variables_defined,
             keyframes_defined: cssResult.keyframes_defined,
           },
         });
-        console.log(`[ForgeAPI] Created CSS asset: ${cssManifest.id}`);
+        cssInfo = { id: cssManifest.id, content_url: cssManifest.content_url };
+        console.log(`[ForgeAPI] Created CSS: ${cssManifest.id}`);
       } catch (cssError) {
-        // CSS generation failed, but component was created successfully
         const errMsg = cssError instanceof Error ? cssError.message : String(cssError);
-        console.error('[ForgeAPI] CSS auto-generation failed:', errMsg);
-        // Continue without CSS - component is still usable
+        console.error('[ForgeAPI] CSS generation failed:', errMsg);
       }
-    } else {
-      console.log(`[ForgeAPI] No css_classes to generate CSS for`);
     }
 
-    // Auto-generate preview bundle (component + CSS + demo_props)
+    // Auto-generate preview bundle
     let previewUrl: string | undefined;
     try {
       console.log(`[ForgeAPI] Generating preview bundle...`);
       const bundler = new BundlerService(c.env, baseUrl);
 
-      // Build list of files to bundle (TSX + CSS if available)
-      const filesToBundle = [manifest.id];
-      if (cssManifest) {
-        filesToBundle.push(cssManifest.id);
-      }
-
-      // Truncate name to avoid ID length issues
-      const bundleName = (result.canonical_name || 'component').slice(0, 40);
-      const bundleResult = await bundler.bundle({
-        name: `${bundleName}-demo`,
-        description: `Preview: ${description}`,
-        files: filesToBundle,
+      const bundleResult = await bundler.bundleFromSource({
+        name: `${createResult.component.canonical_name.slice(0, 40)}-demo`,
+        source: generated.content,
+        fileType: 'tsx',
+        cssId: cssInfo?.id,
+        demoProps: generated.demo_props as Record<string, unknown>,
       });
 
-      // Store the preview bundle (truncate name to avoid exceeding 64 byte ID limit)
-      const baseName = (result.canonical_name || 'component').slice(0, 40);
-      const previewManifest = await service.create({
-        name: `${baseName}-demo`,
+      const previewManifest = await assetService.create({
+        name: `${createResult.component.canonical_name.slice(0, 40)}-demo`,
         type: 'bundle',
         description: `Preview: ${description}`,
         content: bundleResult.html,
@@ -832,14 +851,14 @@ app.post('/create', async (c) => {
         provenance: {
           source_type: 'ai_generated',
           generation_params: {
-            component_id: manifest.id,
-            css_id: cssManifest?.id,
+            component_id: createResult.component.id,
+            css_id: cssInfo?.id,
             bundle_type: 'preview',
           },
         },
         metadata: {
-          component_id: manifest.id,
-          css_id: cssManifest?.id,
+          component_id: createResult.component.id,
+          css_id: cssInfo?.id,
           build_time_ms: bundleResult.buildTimeMs,
         },
       });
@@ -847,28 +866,26 @@ app.post('/create', async (c) => {
       previewUrl = previewManifest.content_url;
       console.log(`[ForgeAPI] Preview created: ${previewManifest.id}`);
     } catch (previewError) {
-      // Preview generation failed, but component was created successfully
       const errMsg = previewError instanceof Error ? previewError.message : String(previewError);
       console.error('[ForgeAPI] Preview generation failed:', errMsg);
-      // Continue without preview
     }
 
     return c.json({
-      id: manifest.id,
-      name: manifest.canonical_name,
-      version: manifest.version,
+      // New component model fields
+      component_id: createResult.component.id,
+      id: createResult.component.id, // Backwards compatibility
+      name: createResult.component.canonical_name,
+      status: createResult.component.status,
+      has_draft: createResult.component.has_draft,
       description,
-      source_url: `${baseUrl}/api/forge/${manifest.id}/source`,
-      content_url: manifest.content_url,
-      // NEW: preview_url with rendered component + styles + demo_props
-      preview_url: previewUrl,
-      props: result.props,
-      css_classes: result.css_classes,
-      // Include CSS info if generated
-      css: cssManifest ? {
-        id: cssManifest.id,
-        content_url: cssManifest.content_url,
-      } : undefined,
+      source_url: `${baseUrl}/api/forge/${createResult.component.id}/source`,
+      content_url: createResult.draft?.content_url,
+      preview_url: previewUrl || createResult.preview_url,
+      props: generated.props,
+      css_classes: generated.css_classes,
+      css: cssInfo,
+      // Hint about draft/publish workflow
+      note: 'Component created as DRAFT. Call forge_publish to make it searchable.',
     }, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -1039,6 +1056,49 @@ app.post('/:id/update', async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('[ForgeAPI] Update error:', message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+/**
+ * POST /api/forge/:id/publish
+ * Publish a component's draft to create a new version
+ * After publishing, the component is searchable via forge_search
+ */
+app.post('/:id/publish', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => ({})) as { changelog?: string };
+
+  const baseUrl = new URL(c.req.url).origin;
+  const componentService = new ComponentService(c.env, baseUrl);
+
+  try {
+    const result = await componentService.publish({
+      component_id: id,
+      changelog: body.changelog,
+    });
+
+    return c.json({
+      component_id: result.component.id,
+      id: result.component.id, // Backwards compatibility
+      name: result.component.canonical_name,
+      status: result.component.status,
+      version: result.version.version,
+      description: result.component.description,
+      content_url: result.version.content_url,
+      manifest_url: result.version.manifest_url,
+      created_at: result.version.created_at,
+      message: `Published version ${result.version.version} - component is now searchable`,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (message.includes('not found')) {
+      return c.json({ error: message }, 404);
+    }
+    if (message.includes('no draft')) {
+      return c.json({ error: message }, 400);
+    }
+    console.error('[ForgeAPI] Publish error:', message);
     return c.json({ error: message }, 500);
   }
 });

@@ -8,6 +8,99 @@
 import type { AssetRecord, VersionBump } from '../types';
 import { incrementVersion, initialVersion, compareVersions } from './semver';
 
+// =============================================================================
+// Component ID Generation (New Model)
+// =============================================================================
+
+/**
+ * Generate a short component ID (8 chars with hyphen)
+ * Format: xxxx-xxxx (e.g., "ebc7-4f2a")
+ */
+export function generateComponentId(): string {
+  const uuid = crypto.randomUUID();
+  // Take first 8 chars and add hyphen in middle
+  return `${uuid.slice(0, 4)}-${uuid.slice(4, 8)}`;
+}
+
+/**
+ * Generate a version ID from component ID and version number
+ * Format: {component_id}-v{version}
+ * Example: "ebc7-4f2a-v1"
+ */
+export function generateVersionId(componentId: string, version: number): string {
+  return `${componentId}-v${version}`;
+}
+
+/**
+ * Check if a string is a valid component ID format
+ * Pattern: xxxx-xxxx (8 hex chars with hyphen)
+ */
+export function isComponentId(id: string): boolean {
+  return /^[a-f0-9]{4}-[a-f0-9]{4}$/.test(id);
+}
+
+/**
+ * Check if a string is a valid version ID format
+ * Pattern: xxxx-xxxx-vN
+ */
+export function isVersionId(id: string): boolean {
+  return /^[a-f0-9]{4}-[a-f0-9]{4}-v\d+$/.test(id);
+}
+
+/**
+ * Extract component ID from a version ID
+ * Example: "ebc7-4f2a-v3" -> "ebc7-4f2a"
+ */
+export function extractComponentIdFromVersionId(versionId: string): string | null {
+  const match = versionId.match(/^([a-f0-9]{4}-[a-f0-9]{4})-v\d+$/);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Extract version number from a version ID
+ * Example: "ebc7-4f2a-v3" -> 3
+ */
+export function extractVersionFromVersionId(versionId: string): number | null {
+  const match = versionId.match(/-v(\d+)$/);
+  return match?.[1] ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Get the R2 key for a draft's content
+ * Format: {component_id}/draft/content
+ */
+export function getDraftContentKey(componentId: string): string {
+  return `${componentId}/draft/content`;
+}
+
+/**
+ * Get the R2 key for a draft's manifest
+ * Format: {component_id}/draft/manifest.json
+ */
+export function getDraftManifestKey(componentId: string): string {
+  return `${componentId}/draft/manifest.json`;
+}
+
+/**
+ * Get the R2 key for a version's content
+ * Format: {component_id}/versions/v{version}/content
+ */
+export function getVersionContentKey(componentId: string, version: number): string {
+  return `${componentId}/versions/v${version}/content`;
+}
+
+/**
+ * Get the R2 key for a version's manifest
+ * Format: {component_id}/versions/v{version}/manifest.json
+ */
+export function getVersionManifestKey(componentId: string, version: number): string {
+  return `${componentId}/versions/v${version}/manifest.json`;
+}
+
+// =============================================================================
+// Legacy Version Chain (for backwards compatibility)
+// =============================================================================
+
 export interface VersionChainNode {
   id: string;
   version: string;
