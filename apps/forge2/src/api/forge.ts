@@ -208,7 +208,10 @@ app.post('/upload', async (c) => {
       metadata.css_classes = parsed.tsx.css_classes;
       metadata.exports = parsed.tsx.exports;
       metadata.demo_props = parsed.tsx.demo_props;
-      console.log(`[ForgeAPI] TSX metadata: ${parsed.tsx.props.length} props, ${parsed.tsx.css_classes.length} css_classes`);
+      console.log(`[ForgeAPI] TSX metadata: ${parsed.tsx.props.length} props, ${parsed.tsx.css_classes.length} css_classes, ${parsed.tsx.dependencies.length} dependencies`);
+      if (parsed.tsx.dependencies.length > 0) {
+        console.log(`[ForgeAPI] Dependencies: ${parsed.tsx.dependencies.join(', ')}`);
+      }
     }
 
     // Add CSS-specific metadata
@@ -219,7 +222,7 @@ app.post('/upload', async (c) => {
       console.log(`[ForgeAPI] CSS metadata: ${parsed.css.classes_defined.length} classes`);
     }
 
-    // Create the asset
+    // Create the asset with dependencies extracted from source
     const manifest = await service.create({
       name: canonical_name,
       type: 'file',
@@ -236,6 +239,8 @@ app.post('/upload', async (c) => {
         },
       },
       metadata,
+      // Pass extracted Forge component dependencies
+      dependencies: parsed.tsx?.dependencies ?? [],
     });
 
     console.log(`[ForgeAPI] Created asset: ${manifest.id}`);
@@ -348,6 +353,7 @@ app.post('/upload', async (c) => {
       css_classes: parsed.tsx?.css_classes,
       exports: parsed.tsx?.exports,
       demo_props: parsed.tsx?.demo_props,
+      dependencies: parsed.tsx?.dependencies ?? [],
       // CSS info if generated
       css: cssManifest ? {
         id: cssManifest.id,
@@ -409,6 +415,9 @@ app.put('/upload/:id', async (c) => {
       metadata.css_classes = parsed.tsx.css_classes;
       metadata.exports = parsed.tsx.exports;
       metadata.demo_props = parsed.tsx.demo_props;
+      if (parsed.tsx.dependencies.length > 0) {
+        console.log(`[ForgeAPI] Dependencies: ${parsed.tsx.dependencies.join(', ')}`);
+      }
     }
 
     if (parsed.css) {
@@ -417,7 +426,7 @@ app.put('/upload/:id', async (c) => {
       metadata.keyframes_defined = parsed.css.keyframes_defined;
     }
 
-    // Create new version
+    // Create new version with dependencies
     const newManifest = await service.create({
       name: existing.canonical_name,
       type: 'file',
@@ -434,6 +443,7 @@ app.put('/upload/:id', async (c) => {
         },
       },
       metadata,
+      dependencies: parsed.tsx?.dependencies ?? [],
     });
 
     console.log(`[ForgeAPI] Created new version: ${newManifest.id}`);
@@ -528,6 +538,7 @@ app.put('/upload/:id', async (c) => {
       css_classes: parsed.tsx?.css_classes,
       exports: parsed.tsx?.exports,
       demo_props: parsed.tsx?.demo_props,
+      dependencies: parsed.tsx?.dependencies ?? [],
       css: cssManifest ? {
         id: cssManifest.id,
         content_url: cssManifest.content_url,

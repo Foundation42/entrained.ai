@@ -254,4 +254,43 @@ app.post('/:name/refs', async (c) => {
   return c.json({ success: true });
 });
 
+// =============================================================================
+// Admin Operations
+// =============================================================================
+
+/**
+ * POST /api/assets/admin/reindex-dependencies
+ * Reindex dependencies for all existing TSX/JSX components.
+ *
+ * This is a migration endpoint to backfill dependency information
+ * for components created before dependency tracking was implemented.
+ *
+ * Returns a summary of the operation:
+ * - scanned: Total assets examined
+ * - updated: Assets with newly extracted dependencies
+ * - skipped: Non-TSX/JSX assets or unchanged dependencies
+ * - errors: Any errors encountered
+ */
+app.post('/admin/reindex-dependencies', async (c) => {
+  const baseUrl = new URL(c.req.url).origin;
+  const service = new AssetService(c.env, baseUrl);
+
+  console.log('[Admin] Starting dependency reindex...');
+
+  try {
+    const result = await service.reindexDependencies();
+
+    console.log(`[Admin] Dependency reindex complete:`, result);
+
+    return c.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Admin] Dependency reindex failed:', message);
+    return c.json({ error: message }, 500);
+  }
+});
+
 export default app;

@@ -28,6 +28,7 @@ import {
   extractVersionNumber,
   buildVersionChain,
 } from '../versioning';
+import { parseTSXSource } from '../generation/source-parser';
 
 export interface CreateAssetInput {
   /** Human-readable name (will be slugified) */
@@ -65,6 +66,9 @@ export interface CreateAssetInput {
 
   /** Additional metadata */
   metadata?: Record<string, unknown>;
+
+  /** Internal Forge component dependencies (IDs of other components this imports) */
+  dependencies?: string[];
 }
 
 export interface UpdateAssetInput {
@@ -88,6 +92,9 @@ export interface UpdateAssetInput {
 
   /** Updated metadata */
   metadata?: Record<string, unknown>;
+
+  /** Updated dependencies (if source changed and has new imports) */
+  dependencies?: string[];
 }
 
 export interface SearchInput {
@@ -132,6 +139,7 @@ export class AssetService {
       bump = 'patch',
       provenance,
       metadata = {},
+      dependencies = [],
     } = input;
 
     // Slugify the name for canonical_name
@@ -187,6 +195,7 @@ export class AssetService {
       size,
       mime_type: mime_type ?? this.guessMimeType(file_type, media_type),
       tags: ['latest'], // New assets are always latest
+      dependencies, // Internal Forge component dependencies
       provenance,
       metadata,
     };
@@ -231,6 +240,7 @@ export class AssetService {
       version: explicitVersion,
       provenance: newProvenance,
       metadata: newMetadata,
+      dependencies: newDependencies,
     } = input;
 
     // Get parent asset
@@ -259,6 +269,8 @@ export class AssetService {
         ...parent.metadata,
         ...newMetadata,
       },
+      // Use new dependencies if provided, otherwise inherit from parent
+      dependencies: newDependencies ?? parent.dependencies ?? [],
     });
   }
 
@@ -434,6 +446,91 @@ export class AssetService {
     }
 
     return { indexed, errors };
+  }
+
+  /**
+   * Reindex dependencies for all TSX/JSX components.
+   *
+   * This migration scans all existing components, parses their source code
+   * to extract Forge dependencies, and updates their manifests in R2.
+   *
+   * Use this to backfill dependencies for components created before
+   * dependency tracking was implemented.
+   */
+  async reindexDependencies(): Promise<{
+    scanned: number;
+    updated: number;
+    skipped: number;
+    errors: string[];
+  }> {
+    let scanned = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    console.log('[AssetService] Starting dependency reindex...');
+
+    for await (const manifest of this.r2.iterateManifests()) {
+      scanned++;
+
+      // Only process TSX/JSX files
+      if (manifest.file_type !== 'tsx' && manifest.file_type !== 'jsx') {
+        skipped++;
+        continue;
+      }
+
+      try {
+        // Fetch the source content
+        const content = await this.r2.getContentAsText(manifest.id);
+        if (!content) {
+          errors.push(`No content for ${manifest.id}`);
+          continue;
+        }
+
+        // Parse to extract dependencies
+        const parsed = parseTSXSource(content);
+        const newDependencies = parsed.dependencies;
+
+        // Check if dependencies changed
+        const existingDeps = manifest.dependencies ?? [];
+        const depsChanged =
+          newDependencies.length !== existingDeps.length ||
+          newDependencies.some((d, i) => d !== existingDeps[i]);
+
+        if (!depsChanged) {
+          console.log(`[AssetService] ${manifest.id}: dependencies unchanged (${existingDeps.length})`);
+          skipped++;
+          continue;
+        }
+
+        // Update the manifest with new dependencies
+        const updatedManifest: AssetManifest = {
+          ...manifest,
+          dependencies: newDependencies,
+        };
+
+        // Store updated manifest back to R2
+        await this.r2.storeManifest(updatedManifest);
+
+        console.log(
+          `[AssetService] ${manifest.id}: updated dependencies ` +
+          `[${existingDeps.join(', ') || 'none'}] -> [${newDependencies.join(', ') || 'none'}]`
+        );
+        updated++;
+
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        errors.push(`Failed to process ${manifest.id}: ${msg}`);
+        console.error(`[AssetService] Error processing ${manifest.id}:`, error);
+      }
+    }
+
+    console.log(
+      `[AssetService] Dependency reindex complete: ` +
+      `${scanned} scanned, ${updated} updated, ${skipped} skipped, ${errors.length} errors`
+    );
+
+    return { scanned, updated, skipped, errors };
   }
 
   // ===========================================================================

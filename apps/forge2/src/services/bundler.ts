@@ -480,36 +480,76 @@ export class BundlerService {
   }
 
   /**
-   * Resolve file references to actual content
+   * Resolve file references to actual content, including transitive dependencies.
+   *
+   * This recursively resolves all Forge component dependencies from manifests,
+   * building a complete dependency graph before bundling.
    */
   private async resolveFiles(refs: string[]): Promise<ResolvedFile[]> {
     const resolved: ResolvedFile[] = [];
+    const resolvedIds = new Set<string>(); // Track resolved to avoid duplicates
+    const resolving = new Set<string>(); // Track currently resolving for circular detection
     const errors: string[] = [];
 
-    for (const ref of refs) {
+    /**
+     * Recursively resolve a single file and its dependencies
+     */
+    const resolveOne = async (ref: string, depth: number = 0): Promise<void> => {
+      const indent = '  '.repeat(depth);
+
       try {
-        console.log(`[Bundler] Resolving: ${ref}`);
+        console.log(`${indent}[Bundler] Resolving: ${ref}`);
 
         // Resolve the reference (handles @latest, semver, exact IDs)
         const manifest = await this.assetService.resolve(ref);
 
         if (!manifest) {
           errors.push(`Could not resolve: ${ref}`);
-          console.warn(`[Bundler] Could not resolve: ${ref}`);
-          continue;
+          console.warn(`${indent}[Bundler] Could not resolve: ${ref}`);
+          return;
         }
 
-        console.log(`[Bundler] Resolved ${ref} -> ${manifest.id}`);
+        // Check if already resolved
+        if (resolvedIds.has(manifest.id)) {
+          console.log(`${indent}[Bundler] Already resolved: ${manifest.id}`);
+          return;
+        }
+
+        // Check for circular dependency
+        if (resolving.has(manifest.id)) {
+          const error = `Circular dependency detected: ${ref} (${manifest.id})`;
+          errors.push(error);
+          console.error(`${indent}[Bundler] ${error}`);
+          throw new Error(error);
+        }
+
+        // Mark as currently resolving
+        resolving.add(manifest.id);
+
+        console.log(`${indent}[Bundler] Resolved ${ref} -> ${manifest.id}`);
 
         // Fetch the content
         const content = await this.assetService.getContentAsText(manifest.id);
 
         if (!content) {
           errors.push(`No content for: ${manifest.id}`);
-          console.warn(`[Bundler] No content for: ${manifest.id}`);
-          continue;
+          console.warn(`${indent}[Bundler] No content for: ${manifest.id}`);
+          resolving.delete(manifest.id);
+          return;
         }
 
+        // Recursively resolve dependencies BEFORE adding this file
+        // This ensures dependencies are added to the list before the files that depend on them
+        const dependencies = manifest.dependencies ?? [];
+        if (dependencies.length > 0) {
+          console.log(`${indent}[Bundler] Resolving ${dependencies.length} dependencies for ${manifest.canonical_name}: ${dependencies.join(', ')}`);
+
+          for (const depId of dependencies) {
+            await resolveOne(depId, depth + 1);
+          }
+        }
+
+        // Now add this file (after its dependencies)
         resolved.push({
           ref,
           id: manifest.id,
@@ -517,16 +557,38 @@ export class BundlerService {
           content,
           fileType: manifest.file_type ?? 'txt',
         });
+
+        resolvedIds.add(manifest.id);
+        resolving.delete(manifest.id);
+
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        errors.push(`Error resolving ${ref}: ${msg}`);
-        console.error(`[Bundler] Error resolving ${ref}:`, error);
+        if (!msg.includes('Circular dependency')) {
+          errors.push(`Error resolving ${ref}: ${msg}`);
+        }
+        console.error(`${indent}[Bundler] Error resolving ${ref}:`, error);
+        throw error; // Re-throw to stop processing on circular deps
+      }
+    };
+
+    // Resolve all requested files and their transitive dependencies
+    for (const ref of refs) {
+      try {
+        await resolveOne(ref, 0);
+      } catch (error) {
+        // If it's a circular dependency, we've already logged it
+        // Continue with other refs or fail based on what we have
+        if (error instanceof Error && error.message.includes('Circular dependency')) {
+          throw error; // Fail fast on circular deps
+        }
       }
     }
 
     if (resolved.length === 0 && errors.length > 0) {
       throw new Error(`Failed to resolve any files:\n${errors.join('\n')}`);
     }
+
+    console.log(`[Bundler] Total files resolved: ${resolved.length} (from ${refs.length} refs)`);
 
     return resolved;
   }
@@ -578,14 +640,19 @@ export class BundlerService {
   /**
    * Build a virtual file system for the bundler container
    * If multiple TSX/JSX components exist, creates a synthetic entry that imports them all
+   *
+   * Files are added using their ID as the filename (e.g., /vector-renderer-v1-fe3b.tsx)
+   * This ensures that imports like `import X from './vector-renderer-v1-fe3b'` resolve correctly.
    */
   private buildVirtualFS(files: ResolvedFile[], layout?: string): { fs: Record<string, string>; syntheticEntry?: string } {
     const fs: Record<string, string> = {};
 
-    // Add all files to the virtual FS
+    // Add all files to the virtual FS using their ID as the filename
+    // This is crucial for import resolution - components import by ID (e.g., './vector-renderer-v1-fe3b')
     for (const file of files) {
       const ext = file.fileType || 'ts';
-      const path = `/${file.canonical_name}.${ext}`;
+      // Use the full ID as the filename so imports resolve correctly
+      const path = `/${file.id}.${ext}`;
       fs[path] = file.content;
       console.log(`[Bundler] VFS: ${path} (${file.content.length} bytes)`);
     }
@@ -619,7 +686,8 @@ export class BundlerService {
         .split(/[-_]/)
         .map(part => part.charAt(0).toUpperCase() + part.slice(1))
         .join('');
-      const path = `./${comp.canonical_name}.${comp.fileType}`;
+      // Use the ID for the import path to match VFS naming convention
+      const path = `./${comp.id}.${comp.fileType}`;
       imports.push(`import ${compName} from "${path}";`);
       componentMap.push({ name: compName, path, canonical: comp.canonical_name });
     }
@@ -659,6 +727,7 @@ export default ForgeApp;
 
   /**
    * Find the entry point file
+   * Returns the path using the file's ID to match the VFS naming convention.
    */
   private findEntryPoint(files: ResolvedFile[], explicitEntry?: string): string {
     // If explicit entry provided, find it
@@ -669,7 +738,7 @@ export default ForgeApp;
                f.canonical_name === explicitEntry
       );
       if (entry) {
-        return `/${entry.canonical_name}.${entry.fileType || 'ts'}`;
+        return `/${entry.id}.${entry.fileType || 'ts'}`;
       }
     }
 
@@ -682,14 +751,14 @@ export default ForgeApp;
         ['tsx', 'jsx', 'ts', 'js'].includes(f.fileType)
       );
       if (match) {
-        return `/${match.canonical_name}.${match.fileType || 'ts'}`;
+        return `/${match.id}.${match.fileType || 'ts'}`;
       }
     }
 
     // Fall back to first TSX/JSX file
     const tsxFile = files.find((f) => f.fileType === 'tsx' || f.fileType === 'jsx');
     if (tsxFile) {
-      return `/${tsxFile.canonical_name}.${tsxFile.fileType}`;
+      return `/${tsxFile.id}.${tsxFile.fileType}`;
     }
 
     // Fall back to first file
@@ -697,7 +766,7 @@ export default ForgeApp;
     if (!first) {
       throw new Error('No files to bundle');
     }
-    return `/${first.canonical_name}.${first.fileType || 'ts'}`;
+    return `/${first.id}.${first.fileType || 'ts'}`;
   }
 
   /**

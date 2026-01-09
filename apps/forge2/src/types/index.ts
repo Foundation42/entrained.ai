@@ -74,6 +74,9 @@ export interface Asset {
   /** Named refs pointing to this asset (e.g., ["latest", "stable"]) */
   tags: string[];
 
+  /** Internal Forge component dependencies (IDs of other components this imports) */
+  dependencies: string[];
+
   /** Generation provenance */
   provenance: AssetProvenance;
 

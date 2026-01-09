@@ -34,6 +34,9 @@ export interface ParsedTSXMetadata {
 
   /** Demo props inferred from defaults or simple types */
   demo_props: Record<string, unknown>;
+
+  /** Internal Forge component dependencies (IDs extracted from imports) */
+  dependencies: string[];
 }
 
 export interface ParsedCSSMetadata {
@@ -74,6 +77,7 @@ export function parseTSXSource(source: string): ParsedTSXMetadata {
   const exports = extractExports(source);
   const componentName = extractComponentName(source);
   const demo_props = generateDemoProps(props);
+  const dependencies = extractForgeDependencies(source);
 
   return {
     componentName,
@@ -81,7 +85,57 @@ export function parseTSXSource(source: string): ParsedTSXMetadata {
     css_classes,
     exports,
     demo_props,
+    dependencies,
   };
+}
+
+/**
+ * Extract internal Forge component dependencies from import statements.
+ *
+ * Identifies imports that reference other Forge components by looking for:
+ * - Relative imports matching the Forge ID pattern: ./component-name-vN-XXXX
+ * - The pattern is: name-vN-XXXX where N is version number and XXXX is 4 hex chars
+ *
+ * Examples:
+ *   import VectorRenderer from './vector-renderer-v1-fe3b';  -> "vector-renderer-v1-fe3b"
+ *   import { Mesh } from './vector-mesh-v1-4718';            -> "vector-mesh-v1-4718"
+ *   import * as THREE from 'three';                          -> ignored (external)
+ *   import React from 'react';                               -> ignored (external)
+ */
+function extractForgeDependencies(source: string): string[] {
+  const dependencies = new Set<string>();
+
+  // Pattern to match Forge component IDs in imports
+  // Forge IDs look like: name-vN-XXXX (e.g., vector-renderer-v1-fe3b)
+  // The pattern matches: ./canonical-name-vN-XXXX or ./canonical-name-vN-XXXX.tsx etc
+  const forgeIdPattern = /^\.\/([a-z0-9-]+-v\d+-[a-f0-9]{4})(?:\.\w+)?$/;
+
+  // Match various import patterns:
+  // import X from './path'
+  // import { X } from './path'
+  // import * as X from './path'
+  // import './path'
+  const importPatterns = [
+    /import\s+(?:[\w{},\s*]+\s+from\s+)?['"]([^'"]+)['"]/g,
+  ];
+
+  for (const pattern of importPatterns) {
+    pattern.lastIndex = 0;
+    let match;
+
+    while ((match = pattern.exec(source)) !== null) {
+      const importPath = match[1];
+      if (!importPath) continue;
+
+      // Check if this is a relative import matching Forge ID pattern
+      const forgeMatch = importPath.match(forgeIdPattern);
+      if (forgeMatch?.[1]) {
+        dependencies.add(forgeMatch[1]);
+      }
+    }
+  }
+
+  return Array.from(dependencies).sort();
 }
 
 /**
