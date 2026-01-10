@@ -622,13 +622,191 @@ export class InstanceService {
     return `${this.baseUrl}/live/${id}`;
   }
 
+  // ===========================================================================
+  // Binding Resolution (Phase 2)
+  // ===========================================================================
+
   /**
    * Get resolved props (props with bindings resolved)
-   * This will be implemented in Phase 2 when we add binding resolution
+   *
+   * Flow:
+   * 1. Get static props from KV
+   * 2. Get bindings configuration
+   * 3. For each binding, resolve the value (with caching)
+   * 4. Merge static props with resolved bindings
    */
   async getResolvedProps(id: string): Promise<Record<string, unknown>> {
-    // For Phase 1, just return the static props
-    // Phase 2 will add binding resolution
-    return this.getProps(id);
+    // Get static props
+    const staticProps = await this.getProps(id);
+
+    // Get bindings
+    const bindings = await this.getBindings(id);
+
+    // If no bindings, just return static props
+    if (!bindings || Object.keys(bindings).length === 0) {
+      return staticProps;
+    }
+
+    // Check for cached resolved props
+    const cacheKey = resolvedKey(id);
+    const cached = await this.kv.get(cacheKey, { type: 'json' }) as {
+      props: Record<string, unknown>;
+      expires: number;
+    } | null;
+
+    // If cache is valid, use it
+    if (cached && cached.expires > Date.now()) {
+      return { ...staticProps, ...cached.props };
+    }
+
+    // Resolve bindings
+    const resolvedBindings: Record<string, unknown> = {};
+    let minTtl = Infinity; // Track minimum TTL for cache
+
+    for (const [propName, binding] of Object.entries(bindings)) {
+      try {
+        const result = await this.resolveBinding(binding);
+        resolvedBindings[propName] = result.value;
+
+        // Track minimum TTL (for cache expiry)
+        if (result.ttl && result.ttl < minTtl) {
+          minTtl = result.ttl;
+        }
+      } catch (error) {
+        console.error(`[Instance] Failed to resolve binding ${propName}:`, error);
+        // Keep static prop value if binding fails
+        if (propName in staticProps) {
+          resolvedBindings[propName] = staticProps[propName];
+        }
+      }
+    }
+
+    // Cache resolved bindings (if we have a TTL)
+    if (minTtl < Infinity && minTtl > 0) {
+      const cacheData = {
+        props: resolvedBindings,
+        expires: Date.now() + (minTtl * 1000),
+      };
+      // Cache for slightly less than the TTL to ensure freshness
+      await this.kv.put(cacheKey, JSON.stringify(cacheData), {
+        expirationTtl: Math.max(60, minTtl), // Minimum 60 seconds
+      });
+    }
+
+    // Merge: static props are base, resolved bindings override
+    return { ...staticProps, ...resolvedBindings };
+  }
+
+  /**
+   * Resolve a single binding to its value
+   */
+  private async resolveBinding(
+    binding: InstanceBinding
+  ): Promise<{ value: unknown; ttl?: number }> {
+    const { source, path, strategy } = binding;
+
+    // Determine TTL from strategy
+    let ttl: number | undefined;
+    if (strategy?.type === 'poll' && 'interval' in strategy) {
+      ttl = strategy.interval;
+    } else if (strategy?.type === 'static' || !strategy) {
+      ttl = undefined; // No automatic refresh
+    }
+
+    switch (source) {
+      case 'static':
+        // Static source: the path IS the value
+        return { value: path, ttl };
+
+      case 'kv':
+        // KV source: fetch from KV namespace
+        return this.resolveKvBinding(path, ttl);
+
+      case 'api':
+        // API source: fetch from external URL
+        return this.resolveApiBinding(path, ttl);
+
+      case 'do':
+        // Durable Object source: Phase 4
+        console.warn('[Instance] Durable Object bindings not yet implemented');
+        return { value: null, ttl };
+
+      default:
+        console.warn(`[Instance] Unknown binding source: ${source}`);
+        return { value: null, ttl };
+    }
+  }
+
+  /**
+   * Resolve a KV binding
+   */
+  private async resolveKvBinding(
+    path: string,
+    ttl?: number
+  ): Promise<{ value: unknown; ttl?: number }> {
+    try {
+      const value = await this.kv.get(path, { type: 'json' });
+      return { value: value ?? null, ttl };
+    } catch (error) {
+      console.error(`[Instance] KV binding error for ${path}:`, error);
+      return { value: null, ttl };
+    }
+  }
+
+  /**
+   * Resolve an API binding (fetch external URL)
+   */
+  private async resolveApiBinding(
+    url: string,
+    ttl?: number
+  ): Promise<{ value: unknown; ttl?: number }> {
+    try {
+      // Validate URL
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error(`Invalid protocol: ${parsed.protocol}`);
+      }
+
+      // Fetch with timeout
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Forge-Instance-Binding/1.0',
+        },
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // Try to parse as JSON, fall back to text
+      const contentType = response.headers.get('content-type') || '';
+      let value: unknown;
+
+      if (contentType.includes('application/json')) {
+        value = await response.json();
+      } else {
+        value = await response.text();
+      }
+
+      return { value, ttl };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`[Instance] API binding error for ${url}:`, message);
+      return { value: null, ttl };
+    }
+  }
+
+  /**
+   * Invalidate the resolved props cache for an instance
+   */
+  async invalidateResolvedCache(id: string): Promise<void> {
+    await this.kv.delete(resolvedKey(id));
   }
 }

@@ -798,6 +798,89 @@ Requires at least one filter (component_id, location, tags, or visibility) to pr
       required: ["props"],
     },
   },
+  {
+    name: "forge_instance_get_bindings",
+    description: "Get the current bindings configuration for an instance. Bindings connect props to live data sources.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        instance_id: { type: "string", description: "Instance ID" },
+      },
+      required: ["instance_id"],
+    },
+  },
+  {
+    name: "forge_instance_set_bindings",
+    description: `Set bindings for an instance. Bindings connect props to live data sources (KV, APIs, etc.).
+
+Binding sources:
+- static: A fixed value (path contains the value itself)
+- kv: CloudFlare KV namespace key (path = "namespace:key")
+- api: External HTTP API (path = URL that returns JSON)
+
+Binding strategies:
+- poll: Refresh on interval (set interval in seconds)
+- (future: sse, webhook for real-time updates)
+
+Example bindings:
+{
+  "notices": {
+    "source": "kv",
+    "path": "notices:surbiton-board",
+    "strategy": { "type": "poll", "interval": 60 }
+  },
+  "weather": {
+    "source": "api",
+    "path": "https://api.weather.com/current",
+    "strategy": { "type": "poll", "interval": 300 }
+  }
+}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        instance_id: { type: "string", description: "Instance ID" },
+        bindings: {
+          type: "object",
+          description: "Bindings configuration (propName -> binding)",
+          additionalProperties: {
+            type: "object",
+            properties: {
+              source: { type: "string", enum: ["static", "kv", "api", "do"], description: "Data source type" },
+              path: { type: "string", description: "Source path (KV key, API URL, etc.)" },
+              strategy: {
+                type: "object",
+                description: "Refresh strategy",
+                properties: {
+                  type: { type: "string", enum: ["poll", "sse", "webhook"], description: "Strategy type" },
+                  interval: { type: "number", description: "Poll interval in seconds (for poll strategy)" },
+                },
+              },
+            },
+            required: ["source", "path"],
+          },
+        },
+      },
+      required: ["instance_id", "bindings"],
+    },
+  },
+  {
+    name: "forge_instance_get_resolved",
+    description: `Get the resolved props for an instance. This returns static props MERGED with data fetched from bindings.
+
+Use this to see what the component will actually receive - the combination of static props and live binding data.
+
+Returns:
+- props: The fully resolved props
+- bindings: The bindings configuration
+- resolved_at: Timestamp of resolution`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        instance_id: { type: "string", description: "Instance ID" },
+      },
+      required: ["instance_id"],
+    },
+  },
 ];
 
 // Handle tool calls
@@ -1251,6 +1334,34 @@ async function handleToolCall(
         method: "PATCH",
         body: { props },
       });
+    }
+
+    case "forge_instance_get_bindings": {
+      const instance_id = args.instance_id as string;
+      if (!instance_id) {
+        throw new Error(`Missing required parameter: instance_id`);
+      }
+      return forgeApi(`/api/instances/${instance_id}/bindings`, env);
+    }
+
+    case "forge_instance_set_bindings": {
+      const instance_id = args.instance_id as string;
+      const bindings = args.bindings as Record<string, unknown>;
+      if (!instance_id || !bindings) {
+        throw new Error(`Missing required parameters: instance_id, bindings`);
+      }
+      return forgeApi(`/api/instances/${instance_id}/bindings`, env, {
+        method: "PUT",
+        body: bindings,
+      });
+    }
+
+    case "forge_instance_get_resolved": {
+      const instance_id = args.instance_id as string;
+      if (!instance_id) {
+        throw new Error(`Missing required parameter: instance_id`);
+      }
+      return forgeApi(`/api/instances/${instance_id}/resolved`, env);
     }
 
     default:
@@ -1731,6 +1842,9 @@ Connect Claude Chat to GoodFaith!
 - forge_instance_replace_props - Replace all props
 - forge_instance_delete - Delete an instance
 - forge_instance_bulk_update - Update props across many instances at once
+- forge_instance_get_bindings - Get current bindings configuration
+- forge_instance_set_bindings - Connect props to live data sources (KV, APIs)
+- forge_instance_get_resolved - Get props with bindings resolved
 
 ## Documentation & Health
 

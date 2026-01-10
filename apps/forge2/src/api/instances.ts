@@ -163,7 +163,7 @@ app.put('/:id/props', async (c) => {
 
 /**
  * GET /api/instances/:id/props
- * Get instance props
+ * Get instance static props (without bindings resolved)
  */
 app.get('/:id/props', async (c) => {
   const id = c.req.param('id');
@@ -178,6 +178,39 @@ app.get('/:id/props', async (c) => {
 
   const props = await service.getProps(id);
   return c.json({ props });
+});
+
+/**
+ * GET /api/instances/:id/resolved
+ * Get instance props with bindings resolved
+ *
+ * This is Phase 2 - returns static props merged with data fetched from bindings
+ */
+app.get('/:id/resolved', async (c) => {
+  const id = c.req.param('id');
+
+  const baseUrl = new URL(c.req.url).origin;
+  const service = new InstanceService(c.env, baseUrl);
+
+  // Check if instance exists
+  if (!(await service.exists(id))) {
+    return c.json({ error: 'Instance not found' }, 404);
+  }
+
+  try {
+    const resolved = await service.getResolvedProps(id);
+    const bindings = await service.getBindings(id);
+
+    return c.json({
+      props: resolved,
+      bindings: bindings || {},
+      resolved_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[InstanceAPI] Resolve error:', message);
+    return c.json({ error: message }, 500);
+  }
 });
 
 // ===========================================================================
@@ -320,7 +353,7 @@ app.get('/:id/live', async (c) => {
 
   try {
     // 2. Get the component preview HTML
-    // TODO: In Phase 2, support component versioning with component_version
+    // TODO: Support component versioning with component_version
     const preview = await componentService.getDraftPreview(instance.component_id);
     if (!preview) {
       return c.json({
@@ -329,10 +362,9 @@ app.get('/:id/live', async (c) => {
       }, 404);
     }
 
-    // 3. Replace demo props with instance props
-    // The HTML contains: window.__FORGE_DEMO_PROPS__ = {...}
-    // We replace this with the instance's current props
-    const instanceProps = instance.props || {};
+    // 3. Get RESOLVED props (static props + bindings)
+    // This is the key Phase 2 feature - bindings are resolved and merged
+    const resolvedProps = await instanceService.getResolvedProps(id);
 
     // Also inject the ForgeHost runtime info
     const forgeHost = {
@@ -349,15 +381,15 @@ app.get('/:id/live', async (c) => {
 
     let html = preview;
 
-    // Replace demo props with instance props
+    // Replace demo props with resolved props (includes binding data)
     if (propsPattern.test(html)) {
       html = html.replace(
         propsPattern,
-        `window.__FORGE_DEMO_PROPS__ = ${JSON.stringify(instanceProps, null, 2)};`
+        `window.__FORGE_DEMO_PROPS__ = ${JSON.stringify(resolvedProps, null, 2)};`
       );
     } else {
       // If no demo props placeholder, inject before the closing </head>
-      const propsScript = `<script>window.__FORGE_DEMO_PROPS__ = ${JSON.stringify(instanceProps, null, 2)};</script>`;
+      const propsScript = `<script>window.__FORGE_DEMO_PROPS__ = ${JSON.stringify(resolvedProps, null, 2)};</script>`;
       html = html.replace('</head>', `${propsScript}\n</head>`);
     }
 
