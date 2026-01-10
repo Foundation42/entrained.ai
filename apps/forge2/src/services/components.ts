@@ -522,10 +522,30 @@ export class ComponentService {
   }
 
   /**
+   * Get draft content with metadata (for serving binary content with correct MIME type)
+   */
+  async getDraftContentWithMetadata(componentId: string): Promise<{
+    content: ArrayBuffer;
+    contentType: string;
+  } | null> {
+    return this.r2.getDraftContentWithMetadata(componentId);
+  }
+
+  /**
    * Get version content as text
    */
   async getVersionContent(componentId: string, version: number): Promise<string | null> {
     return this.r2.getVersionContentAsText(componentId, version);
+  }
+
+  /**
+   * Get version content with metadata (for binary content like images)
+   */
+  async getVersionContentWithMetadata(componentId: string, version: number): Promise<{
+    content: ArrayBuffer;
+    contentType: string;
+  } | null> {
+    return this.r2.getVersionContentWithMetadata(componentId, version);
   }
 
   /**
@@ -630,6 +650,40 @@ export class ComponentService {
     }
 
     return { deleted: errors.length === 0, errors };
+  }
+
+  // ===========================================================================
+  // Preview and CSS Operations
+  // ===========================================================================
+
+  /**
+   * Store preview HTML for a component draft
+   * Returns the public URL for the preview
+   */
+  async storeDraftPreview(componentId: string, html: string): Promise<string> {
+    return this.r2.storeDraftPreview(componentId, html, this.baseUrl);
+  }
+
+  /**
+   * Get draft preview HTML
+   */
+  async getDraftPreview(componentId: string): Promise<string | null> {
+    return this.r2.getDraftPreview(componentId);
+  }
+
+  /**
+   * Store CSS for a component draft
+   * Returns the public URL for the CSS
+   */
+  async storeDraftCss(componentId: string, css: string): Promise<string> {
+    return this.r2.storeDraftCss(componentId, css, this.baseUrl);
+  }
+
+  /**
+   * Get draft CSS
+   */
+  async getDraftCss(componentId: string): Promise<string | null> {
+    return this.r2.getDraftCss(componentId);
   }
 
   // ===========================================================================

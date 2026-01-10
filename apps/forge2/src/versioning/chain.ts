@@ -82,6 +82,22 @@ export function getDraftManifestKey(componentId: string): string {
 }
 
 /**
+ * Get the R2 key for a draft's preview HTML
+ * Format: {component_id}/draft/preview.html
+ */
+export function getDraftPreviewKey(componentId: string): string {
+  return `${componentId}/draft/preview.html`;
+}
+
+/**
+ * Get the R2 key for a draft's CSS styles
+ * Format: {component_id}/draft/styles.css
+ */
+export function getDraftCssKey(componentId: string): string {
+  return `${componentId}/draft/styles.css`;
+}
+
+/**
  * Get the R2 key for a version's content
  * Format: {component_id}/versions/v{version}/content
  */

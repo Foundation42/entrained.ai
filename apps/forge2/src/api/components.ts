@@ -162,12 +162,12 @@ app.get('/:id/content', async (c) => {
   const baseUrl = new URL(c.req.url).origin;
   const service = new ComponentService(c.env, baseUrl);
 
-  // Try draft first
-  const draftContent = await service.getDraftContent(id);
-  if (draftContent) {
-    return new Response(draftContent, {
+  // Try draft first (with metadata for correct MIME type)
+  const draftResult = await service.getDraftContentWithMetadata(id);
+  if (draftResult) {
+    return new Response(draftResult.content, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': draftResult.contentType,
         'Cache-Control': 'no-cache',
       },
     });
@@ -180,11 +180,11 @@ app.get('/:id/content', async (c) => {
   }
 
   if ('version' in result) {
-    const content = await service.getVersionContent(id, result.version.version);
-    if (content) {
-      return new Response(content, {
+    const versionResult = await service.getVersionContentWithMetadata(id, result.version.version);
+    if (versionResult) {
+      return new Response(versionResult.content, {
         headers: {
-          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Type': versionResult.contentType,
           'Cache-Control': 'public, max-age=31536000, immutable',
         },
       });
@@ -331,14 +331,14 @@ app.get('/:id/versions/:version/content', async (c) => {
   const baseUrl = new URL(c.req.url).origin;
   const service = new ComponentService(c.env, baseUrl);
 
-  const content = await service.getVersionContent(id, versionNum);
-  if (!content) {
+  const result = await service.getVersionContentWithMetadata(id, versionNum);
+  if (!result) {
     return c.json({ error: 'Version content not found' }, 404);
   }
 
-  return new Response(content, {
+  return new Response(result.content, {
     headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Type': result.contentType,
       'Cache-Control': 'public, max-age=31536000, immutable',
     },
   });
@@ -413,14 +413,14 @@ app.get('/:id/draft/content', async (c) => {
   const baseUrl = new URL(c.req.url).origin;
   const service = new ComponentService(c.env, baseUrl);
 
-  const content = await service.getDraftContent(id);
-  if (!content) {
+  const result = await service.getDraftContentWithMetadata(id);
+  if (!result) {
     return c.json({ error: 'Draft not found' }, 404);
   }
 
-  return new Response(content, {
+  return new Response(result.content, {
     headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Type': result.contentType,
       'Cache-Control': 'no-cache',
     },
   });

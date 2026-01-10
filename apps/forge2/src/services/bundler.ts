@@ -10,7 +10,7 @@ import type {
   AssetManifest,
   BundleArtifact,
 } from '../types';
-import { AssetService } from './assets';
+import { ComponentService } from './components';
 
 // =============================================================================
 // CDN Library Definitions
@@ -295,11 +295,11 @@ export interface ResolvedFile {
 }
 
 export class BundlerService {
-  private assetService: AssetService;
+  private componentService: ComponentService;
   private env: Env;
 
   constructor(env: Env, baseUrl: string) {
-    this.assetService = new AssetService(env, baseUrl);
+    this.componentService = new ComponentService(env, baseUrl);
     this.env = env;
   }
 
@@ -358,9 +358,10 @@ export class BundlerService {
     source: string;
     fileType: string;
     cssId?: string;
+    inlineCss?: string;
     demoProps?: Record<string, unknown>;
   }): Promise<BundleOutput> {
-    const { name, source, fileType, cssId, demoProps } = input;
+    const { name, source, fileType, cssId, inlineCss, demoProps } = input;
     console.log(`[Bundler] Creating bundle from source: ${name}`);
 
     // Create a resolved file from the source
@@ -372,17 +373,34 @@ export class BundlerService {
       fileType,
     }];
 
-    // If CSS ID provided, resolve and include it
-    if (cssId) {
+    // If inline CSS provided, use it directly
+    if (inlineCss) {
+      resolvedFiles.push({
+        ref: `${name}-styles`,
+        id: `${name}-styles`,
+        canonical_name: `${name}-styles`,
+        content: inlineCss,
+        fileType: 'css',
+      });
+    }
+    // Otherwise if CSS ID provided, resolve and include it
+    else if (cssId) {
       try {
-        const cssManifest = await this.assetService.resolve(cssId);
-        if (cssManifest) {
-          const cssContent = await this.assetService.getContentAsText(cssManifest.id);
+        const cssResult = await this.componentService.get(cssId);
+        if (cssResult) {
+          // Get CSS content - prefer draft, fall back to latest version
+          let cssContent: string | null = null;
+          if ('draft' in cssResult && cssResult.draft) {
+            cssContent = await this.componentService.getDraftContent(cssId);
+          }
+          if (!cssContent && cssResult.component.latest_version > 0) {
+            cssContent = await this.componentService.getVersionContent(cssId, cssResult.component.latest_version);
+          }
           if (cssContent) {
             resolvedFiles.push({
               ref: cssId,
-              id: cssManifest.id,
-              canonical_name: cssManifest.canonical_name,
+              id: cssResult.component.id,
+              canonical_name: cssResult.component.canonical_name,
               content: cssContent,
               fileType: 'css',
             });
@@ -557,9 +575,18 @@ export class BundlerService {
       // For single component, use flat props from entry file
       const entryFile = resolvedFiles.find(f => f.fileType === 'tsx' || f.fileType === 'jsx') ?? resolvedFiles[0];
       if (entryFile) {
-        const manifest = await this.assetService.get(entryFile.id);
-        if (manifest?.metadata?.demo_props) {
-          demoProps = manifest.metadata.demo_props as Record<string, unknown>;
+        const componentResult = await this.componentService.get(entryFile.id);
+        if (componentResult) {
+          // Get metadata from draft or version
+          let metadata: Record<string, unknown> = {};
+          if ('draft' in componentResult && componentResult.draft) {
+            metadata = componentResult.draft.metadata ?? {};
+          } else if ('version' in componentResult && componentResult.version) {
+            metadata = componentResult.version.metadata ?? {};
+          }
+          if (metadata.demo_props) {
+            demoProps = metadata.demo_props as Record<string, unknown>;
+          }
         }
       }
     }
@@ -621,49 +648,63 @@ export class BundlerService {
       try {
         console.log(`${indent}[Bundler] Resolving: ${ref}`);
 
-        // Resolve the reference (handles @latest, semver, exact IDs)
-        const manifest = await this.assetService.resolve(ref);
+        // Resolve the component using ComponentService
+        const result = await this.componentService.get(ref);
 
-        if (!manifest) {
+        if (!result) {
           errors.push(`Could not resolve: ${ref}`);
           console.warn(`${indent}[Bundler] Could not resolve: ${ref}`);
           return;
         }
 
+        const { component } = result;
+
         // Check if already resolved
-        if (resolvedIds.has(manifest.id)) {
-          console.log(`${indent}[Bundler] Already resolved: ${manifest.id}`);
+        if (resolvedIds.has(component.id)) {
+          console.log(`${indent}[Bundler] Already resolved: ${component.id}`);
           return;
         }
 
         // Check for circular dependency
-        if (resolving.has(manifest.id)) {
-          const error = `Circular dependency detected: ${ref} (${manifest.id})`;
+        if (resolving.has(component.id)) {
+          const error = `Circular dependency detected: ${ref} (${component.id})`;
           errors.push(error);
           console.error(`${indent}[Bundler] ${error}`);
           throw new Error(error);
         }
 
         // Mark as currently resolving
-        resolving.add(manifest.id);
+        resolving.add(component.id);
 
-        console.log(`${indent}[Bundler] Resolved ${ref} -> ${manifest.id}`);
+        console.log(`${indent}[Bundler] Resolved ${ref} -> ${component.id}`);
 
-        // Fetch the content
-        const content = await this.assetService.getContentAsText(manifest.id);
+        // Fetch the content - prefer draft, fall back to latest version
+        let content: string | null = null;
+        let dependencies: string[] = [];
+
+        if ('draft' in result && result.draft) {
+          content = await this.componentService.getDraftContent(component.id);
+          dependencies = result.draft.dependencies ?? [];
+        }
+        if (!content && component.latest_version > 0) {
+          content = await this.componentService.getVersionContent(component.id, component.latest_version);
+          // Get dependencies from version
+          if ('version' in result && result.version) {
+            dependencies = result.version.dependencies ?? [];
+          }
+        }
 
         if (!content) {
-          errors.push(`No content for: ${manifest.id}`);
-          console.warn(`${indent}[Bundler] No content for: ${manifest.id}`);
-          resolving.delete(manifest.id);
+          errors.push(`No content for: ${component.id}`);
+          console.warn(`${indent}[Bundler] No content for: ${component.id}`);
+          resolving.delete(component.id);
           return;
         }
 
         // Recursively resolve dependencies BEFORE adding this file
         // This ensures dependencies are added to the list before the files that depend on them
-        const dependencies = manifest.dependencies ?? [];
         if (dependencies.length > 0) {
-          console.log(`${indent}[Bundler] Resolving ${dependencies.length} dependencies for ${manifest.canonical_name}: ${dependencies.join(', ')}`);
+          console.log(`${indent}[Bundler] Resolving ${dependencies.length} dependencies for ${component.canonical_name}: ${dependencies.join(', ')}`);
 
           for (const depId of dependencies) {
             await resolveOne(depId, depth + 1);
@@ -673,14 +714,14 @@ export class BundlerService {
         // Now add this file (after its dependencies)
         resolved.push({
           ref,
-          id: manifest.id,
-          canonical_name: manifest.canonical_name,
+          id: component.id,
+          canonical_name: component.canonical_name,
           content,
-          fileType: manifest.file_type ?? 'txt',
+          fileType: component.file_type ?? 'txt',
         });
 
-        resolvedIds.add(manifest.id);
-        resolving.delete(manifest.id);
+        resolvedIds.add(component.id);
+        resolving.delete(component.id);
 
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -715,16 +756,52 @@ export class BundlerService {
   }
 
   /**
-   * Resolve asset references
+   * Resolve asset references (media assets like images/audio)
+   * Note: These are stored as components with type='asset' in the new model
    */
   private async resolveAssets(refs: string[]): Promise<AssetManifest[]> {
     const resolved: AssetManifest[] = [];
 
     for (const ref of refs) {
       try {
-        const manifest = await this.assetService.resolve(ref);
-        if (manifest) {
-          resolved.push(manifest);
+        const result = await this.componentService.get(ref);
+        if (result) {
+          // Convert to AssetManifest format for compatibility
+          const { component } = result;
+          let content_url = '';
+          let manifest_url = '';
+          let metadata: Record<string, unknown> = {};
+          let provenance: { source_type: 'ai_generated' | 'manual' | 'import' } = { source_type: 'manual' };
+
+          if ('draft' in result && result.draft) {
+            content_url = result.draft.content_url;
+            manifest_url = result.draft.manifest_url ?? '';
+            metadata = result.draft.metadata ?? {};
+            provenance = result.draft.provenance ?? { source_type: 'manual' };
+          } else if ('version' in result && result.version) {
+            content_url = result.version.content_url;
+            manifest_url = result.version.manifest_url ?? '';
+            metadata = result.version.metadata ?? {};
+            provenance = result.version.provenance ?? { source_type: 'manual' };
+          }
+
+          resolved.push({
+            id: component.id,
+            canonical_name: component.canonical_name,
+            type: component.type,
+            file_type: component.file_type,
+            media_type: component.media_type,
+            description: component.description,
+            version: `${component.latest_version}`,
+            content_url,
+            manifest_url,
+            created_at: component.created_at,
+            children_ids: [],
+            tags: [],
+            dependencies: [],
+            metadata,
+            provenance,
+          });
         }
       } catch (error) {
         console.error(`[Bundler] Error resolving asset ${ref}:`, error);
@@ -745,10 +822,20 @@ export class BundlerService {
 
     for (const file of tsxFiles) {
       try {
-        const manifest = await this.assetService.get(file.id);
-        if (manifest?.metadata?.demo_props) {
-          propsMap[file.canonical_name] = manifest.metadata.demo_props as Record<string, unknown>;
-          console.log(`[Bundler] Collected demo_props for ${file.canonical_name}`);
+        const result = await this.componentService.get(file.id);
+        if (result) {
+          // Get metadata from draft or version
+          let metadata: Record<string, unknown> = {};
+          if ('draft' in result && result.draft) {
+            metadata = result.draft.metadata ?? {};
+          } else if ('version' in result && result.version) {
+            metadata = result.version.metadata ?? {};
+          }
+
+          if (metadata.demo_props) {
+            propsMap[file.canonical_name] = metadata.demo_props as Record<string, unknown>;
+            console.log(`[Bundler] Collected demo_props for ${file.canonical_name}`);
+          }
         }
       } catch (error) {
         console.error(`[Bundler] Error getting demo_props for ${file.id}:`, error);

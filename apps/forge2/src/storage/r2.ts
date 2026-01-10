@@ -11,6 +11,8 @@ import type { Asset, AssetManifest, VersionProvenance } from '../types';
 import {
   getDraftContentKey,
   getDraftManifestKey,
+  getDraftPreviewKey,
+  getDraftCssKey,
   getVersionContentKey,
   getVersionManifestKey,
 } from '../versioning';
@@ -386,6 +388,23 @@ export class R2Storage {
   }
 
   /**
+   * Get draft content with metadata (for serving with correct MIME type)
+   */
+  async getDraftContentWithMetadata(componentId: string): Promise<{
+    content: ArrayBuffer;
+    contentType: string;
+  } | null> {
+    const contentKey = getDraftContentKey(componentId);
+    const object = await this.bucket.get(contentKey);
+    if (!object) return null;
+
+    return {
+      content: await object.arrayBuffer(),
+      contentType: object.httpMetadata?.contentType ?? 'application/octet-stream',
+    };
+  }
+
+  /**
    * Get draft content as text
    */
   async getDraftContentAsText(componentId: string): Promise<string | null> {
@@ -416,6 +435,76 @@ export class R2Storage {
     const contentKey = getDraftContentKey(componentId);
     const head = await this.bucket.head(contentKey);
     return head !== null;
+  }
+
+  /**
+   * Store preview HTML for a component draft
+   * Returns the public URL for the preview
+   */
+  async storeDraftPreview(
+    componentId: string,
+    html: string,
+    baseUrl: string
+  ): Promise<string> {
+    const key = getDraftPreviewKey(componentId);
+
+    await this.bucket.put(key, html, {
+      httpMetadata: {
+        contentType: 'text/html',
+        cacheControl: 'no-cache', // Drafts can change
+      },
+      customMetadata: {
+        component_id: componentId,
+        is_draft: 'true',
+        type: 'preview',
+      },
+    });
+
+    return `${baseUrl}/api/forge/${componentId}/preview`;
+  }
+
+  /**
+   * Get draft preview HTML
+   */
+  async getDraftPreview(componentId: string): Promise<string | null> {
+    const key = getDraftPreviewKey(componentId);
+    const object = await this.bucket.get(key);
+    return object ? object.text() : null;
+  }
+
+  /**
+   * Store CSS for a component draft
+   * Returns the public URL for the CSS
+   */
+  async storeDraftCss(
+    componentId: string,
+    css: string,
+    baseUrl: string
+  ): Promise<string> {
+    const key = getDraftCssKey(componentId);
+
+    await this.bucket.put(key, css, {
+      httpMetadata: {
+        contentType: 'text/css',
+        cacheControl: 'no-cache',
+      },
+      customMetadata: {
+        component_id: componentId,
+        is_draft: 'true',
+        type: 'css',
+      },
+    });
+
+    return `${baseUrl}/api/forge/${componentId}/styles.css`;
+  }
+
+  /**
+   * Get draft CSS
+   */
+  async getDraftCss(componentId: string): Promise<string | null> {
+    const key = getDraftCssKey(componentId);
+    const object = await this.bucket.get(key);
+    return object ? object.text() : null;
   }
 
   /**
@@ -483,6 +572,23 @@ export class R2Storage {
     const contentKey = getVersionContentKey(componentId, version);
     const object = await this.bucket.get(contentKey);
     return object ? object.arrayBuffer() : null;
+  }
+
+  /**
+   * Get version content with metadata (for serving with correct MIME type)
+   */
+  async getVersionContentWithMetadata(componentId: string, version: number): Promise<{
+    content: ArrayBuffer;
+    contentType: string;
+  } | null> {
+    const contentKey = getVersionContentKey(componentId, version);
+    const object = await this.bucket.get(contentKey);
+    if (!object) return null;
+
+    return {
+      content: await object.arrayBuffer(),
+      contentType: object.httpMetadata?.contentType ?? 'application/octet-stream',
+    };
   }
 
   /**

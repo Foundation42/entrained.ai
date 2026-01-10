@@ -41,6 +41,8 @@ export {
   extractVersionFromVersionId,
   getDraftContentKey,
   getDraftManifestKey,
+  getDraftPreviewKey,
+  getDraftCssKey,
   getVersionContentKey,
   getVersionManifestKey,
 } from './chain';
