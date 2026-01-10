@@ -323,7 +323,8 @@ export async function generateApp(
           tsx.css_classes,
           tsxDescription,
           plan.style,
-          env
+          env,
+          tsx.content  // Pass source code for accurate CSS generation
         );
 
         cssManifest = await assetService.create({
@@ -510,7 +511,8 @@ export async function generateApp(
       appWrapper.css_classes,
       `App wrapper for ${plan.name}`,
       plan.style,
-      env
+      env,
+      appWrapper.content  // Pass source code for accurate CSS generation
     );
 
     const appCssManifest = await assetService.create({

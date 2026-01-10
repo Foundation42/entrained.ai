@@ -298,7 +298,8 @@ app.post('/upload', async (c) => {
           css_classes,
           description || result.component.canonical_name,
           style,
-          c.env
+          c.env,
+          source  // Pass source code for accurate CSS generation
         );
 
         // Store CSS in draft location
@@ -455,7 +456,8 @@ app.put('/upload/:id', async (c) => {
           css_classes,
           description || component.description,
           style,
-          c.env
+          c.env,
+          source  // Pass source code for accurate CSS generation
         );
 
         // Store CSS in draft location
@@ -847,7 +849,8 @@ app.post('/create', async (c) => {
           generated.css_classes,
           description,
           hints?.style,
-          c.env
+          c.env,
+          generated.content  // Pass source code for accurate CSS generation
         );
 
         // Store CSS directly in R2 under the component's draft folder
@@ -993,11 +996,13 @@ app.post('/:id/update', async (c) => {
     if (result.css_classes && result.css_classes.length > 0) {
       console.log(`[ForgeAPI] Auto-generating CSS for updated component: ${result.css_classes.length} classes`);
       try {
+        // Pass the NEW source code so CSS generator sees current URLs/content
         const cssResult = await generateCssForComponent(
           result.css_classes,
           component.component.description,
           body.style,
-          c.env
+          c.env,
+          result.content  // Pass source code for accurate CSS generation
         );
 
         // Store CSS directly in R2 under the component's draft folder
@@ -1243,11 +1248,13 @@ app.put('/:id/source', async (c) => {
     if ((file_type === 'tsx' || file_type === 'jsx') && css_classes && css_classes.length > 0) {
       console.log(`[ForgeAPI] Auto-generating CSS for source update: ${css_classes.length} classes`);
       try {
+        // Pass the NEW source code so CSS generator sees current URLs/content
         const cssResult = await generateCssForComponent(
           css_classes,
           component.description,
           body.style,
-          c.env
+          c.env,
+          newSource  // Pass source code for accurate CSS generation
         );
 
         // Store CSS in draft location

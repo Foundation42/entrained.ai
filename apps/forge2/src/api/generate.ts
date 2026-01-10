@@ -144,12 +144,16 @@ app.post('/css-for-component', async (c) => {
 
     console.log(`[CSSForComponent] Generating CSS for ${cssClasses.length} classes from ${manifest.id}`);
 
+    // Fetch the source code for more accurate CSS generation
+    const sourceCode = await service.getContentAsText(manifest.id);
+
     // Generate CSS that matches
     const result = await generateCssForComponent(
       cssClasses,
       manifest.description,
       style,
-      c.env
+      c.env,
+      sourceCode ?? undefined  // Pass source code if available
     );
 
     // Create as an asset

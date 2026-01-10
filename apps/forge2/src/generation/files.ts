@@ -703,12 +703,19 @@ export function requestToHints(request: CreateFileRequest): FileGenerationHints 
  * Generate CSS that matches a component's css_classes
  * This is the key to AI-assisted composition - generating CSS that exactly matches
  * the class names used by a component.
+ *
+ * @param cssClasses - Class names to generate CSS for
+ * @param componentDescription - Description of the component (for context)
+ * @param styleHints - Optional style hints (e.g., "dark mode", "minimalist")
+ * @param env - Environment bindings
+ * @param sourceCode - Optional source code (preferred over description for accuracy)
  */
 export async function generateCssForComponent(
   cssClasses: string[],
   componentDescription: string,
   styleHints: string | undefined,
-  env: Env
+  env: Env,
+  sourceCode?: string
 ): Promise<GeneratedFile> {
   const systemPrompt = `You are an expert CSS developer. Generate CSS that implements exactly the class names provided.
 
@@ -719,6 +726,8 @@ Rules:
 - Use relative units (rem, em) over pixels where appropriate
 - Group related properties logically
 - Make the styles visually appealing and professional
+- NEVER embed URLs or external resources in the CSS (no background-image: url(...) with http URLs)
+- If the component needs image backgrounds, use CSS patterns, gradients, or placeholder colors instead
 
 Layout best practices:
 - Grid containers: use "grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))" for responsive card grids
@@ -742,14 +751,21 @@ Output a JSON object with these keys:
 
 Output ONLY valid JSON. No markdown fences, no explanations.`;
 
-  const userPrompt = `Generate CSS for a component described as: "${componentDescription}"
+  // Prefer source code over description for understanding the component
+  const contextInfo = sourceCode
+    ? `Source code:\n\`\`\`tsx\n${sourceCode.slice(0, 4000)}\n\`\`\``
+    : `Component description: "${componentDescription}"`;
+
+  const userPrompt = `Generate CSS for a React component.
+
+${contextInfo}
 
 The component uses these CSS classes (you MUST define all of them):
 ${cssClasses.map(c => `- .${c}`).join('\n')}
 
 ${styleHints ? `Style hints: ${styleHints}` : ''}
 
-Generate CSS that makes this component look polished and professional.`;
+Generate CSS that makes this component look polished and professional. Do NOT include any external URLs in the CSS.`;
 
   const messages: LLMMessage[] = [
     { role: 'system', content: systemPrompt },
