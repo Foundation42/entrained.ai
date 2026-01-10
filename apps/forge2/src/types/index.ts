@@ -189,6 +189,8 @@ export interface ImageReference {
   type: 'image';
   /** URL to the image */
   url: string;
+  /** What to use from the image */
+  use?: 'style' | 'structure' | 'both';
   /** Description of what to take from this image */
   description?: string;
 }
@@ -510,6 +512,10 @@ export interface CreateImageRequest {
     style?: 'illustration' | 'photo' | '3d' | 'pixel-art';
     transparent?: boolean;
     preset?: 'icon' | 'hero' | 'sprite';
+    /** Reference images for style/structure matching */
+    references?: ImageReference[];
+    /** Things to avoid in the generated image (added as DON'T section) */
+    negativePrompt?: string;
   };
 }
 

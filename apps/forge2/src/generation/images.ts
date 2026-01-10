@@ -5,7 +5,7 @@
  * Ported from Forge 1.0 and adapted for the unified asset model.
  */
 
-import type { Env, CreateImageRequest } from '../types';
+import type { Env, CreateImageRequest, ImageReference } from '../types';
 import { mergeWithMask } from './png';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
@@ -13,12 +13,24 @@ const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
 export type ImageStyle = 'illustration' | 'photo' | '3d' | 'pixel-art';
 export type ImagePreset = 'icon' | 'hero' | 'sprite';
 
+/** Fetched reference image with binary data */
+export interface FetchedReference {
+  data: ArrayBuffer;
+  mimeType: string;
+  use?: 'style' | 'structure' | 'both';
+  description?: string;
+}
+
 export interface ImageOptions {
   width?: number;
   height?: number;
   transparent?: boolean;
   style?: ImageStyle;
   preset?: ImagePreset;
+  /** Reference images for style/structure matching */
+  references?: ImageReference[];
+  /** Things to avoid (added as DON'T section in prompt) */
+  negativePrompt?: string;
 }
 
 export interface GeneratedImage {
@@ -35,11 +47,14 @@ const PRESETS: Record<ImagePreset, Partial<ImageOptions>> = {
   sprite: { width: 64, height: 64, transparent: true, style: 'pixel-art' },
 };
 
+/** Resolved options with required base fields */
+type ResolvedOptions = Required<Omit<ImageOptions, 'preset' | 'references' | 'negativePrompt'>>;
+
 /**
  * Resolve options with preset and defaults applied
  */
-function resolveOptions(options: ImageOptions = {}): Required<Omit<ImageOptions, 'preset'>> {
-  let resolved: Required<Omit<ImageOptions, 'preset'>> = {
+function resolveOptions(options: ImageOptions = {}): ResolvedOptions {
+  let resolved: ResolvedOptions = {
     width: 512,
     height: 512,
     transparent: false,
@@ -79,9 +94,41 @@ function getStylePrompt(style: ImageStyle): string {
 }
 
 /**
+ * Build reference image descriptions for the prompt
+ */
+function buildReferenceDescriptions(references: FetchedReference[]): string {
+  if (references.length === 0) return '';
+
+  const lines: string[] = ['Reference images provided:'];
+
+  for (let i = 0; i < references.length; i++) {
+    const ref = references[i]!;
+    const useType = ref.use || 'reference';
+    const desc = ref.description || `Image ${i + 1}`;
+
+    if (useType === 'style') {
+      lines.push(`- Style reference (Image ${i + 1}): ${desc}. Match the visual style, colors, and character design from this image.`);
+    } else if (useType === 'structure') {
+      lines.push(`- Structure reference (Image ${i + 1}): ${desc}. Match the exact pose, body position, and composition from this image.`);
+    } else if (useType === 'both') {
+      lines.push(`- Style & structure reference (Image ${i + 1}): ${desc}. Match both the visual style AND the pose/composition from this image.`);
+    } else {
+      lines.push(`- Reference (Image ${i + 1}): ${desc}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
  * Build the full prompt for image generation
  */
-function buildPrompt(userPrompt: string, options: Required<Omit<ImageOptions, 'preset'>>): string {
+function buildPrompt(
+  userPrompt: string,
+  options: ResolvedOptions,
+  references: FetchedReference[] = [],
+  negativePrompt?: string
+): string {
   const styleHint = getStylePrompt(options.style);
   // When transparency is requested, ask for a clean solid background
   // Do NOT mention "transparent" or "alpha" - Gemini renders checkerboard patterns
@@ -90,17 +137,75 @@ function buildPrompt(userPrompt: string, options: Required<Omit<ImageOptions, 'p
     : '';
   const sizeHint = `Output dimensions: ${options.width}x${options.height} pixels.`;
 
+  // Build reference descriptions
+  const refDescriptions = buildReferenceDescriptions(references);
+
+  // Build DON'T section for negative prompts
+  const dontSection = negativePrompt
+    ? `\nDON'T:\n- ${negativePrompt.split(',').map(s => s.trim()).join('\n- ')}`
+    : '';
+
   return `Create an image: ${userPrompt}
 
 Style: ${styleHint}
 ${bgHint}
 ${sizeHint}
+${refDescriptions}
 
 Requirements:
 - High quality, detailed output
 - Clean, professional appearance
 - Centered composition
-- No text or watermarks unless specifically requested`;
+- No text or watermarks unless specifically requested${dontSection}`;
+}
+
+/**
+ * Fetch reference images from URLs
+ */
+async function fetchReferenceImages(
+  references: ImageReference[]
+): Promise<FetchedReference[]> {
+  const fetched: FetchedReference[] = [];
+
+  for (const ref of references) {
+    try {
+      console.log(`[ImageGen] Fetching reference: ${ref.url}`);
+      const response = await fetch(ref.url);
+
+      if (!response.ok) {
+        console.warn(`[ImageGen] Failed to fetch reference ${ref.url}: ${response.status}`);
+        continue;
+      }
+
+      const contentType = response.headers.get('content-type') || 'image/png';
+      const data = await response.arrayBuffer();
+
+      fetched.push({
+        data,
+        mimeType: contentType,
+        use: ref.use,
+        description: ref.description,
+      });
+
+      console.log(`[ImageGen] Fetched reference: ${data.byteLength} bytes, type: ${contentType}`);
+    } catch (error) {
+      console.warn(`[ImageGen] Error fetching reference ${ref.url}:`, error);
+    }
+  }
+
+  return fetched;
+}
+
+/**
+ * Convert ArrayBuffer to base64 string
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  return btoa(binary);
 }
 
 /**
@@ -116,19 +221,44 @@ export async function generateImage(
   }
 
   const resolved = resolveOptions(options);
-  const fullPrompt = buildPrompt(prompt, resolved);
+
+  // Fetch reference images if provided
+  const fetchedRefs = options.references?.length
+    ? await fetchReferenceImages(options.references)
+    : [];
+
+  const fullPrompt = buildPrompt(prompt, resolved, fetchedRefs, options.negativePrompt);
   const model = env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
 
   const url = `${GEMINI_API_BASE}/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
 
   console.log(`[ImageGen] Generating ${resolved.width}x${resolved.height} ${resolved.style} image`);
   console.log(`[ImageGen] Prompt: ${prompt.slice(0, 100)}...`);
+  if (fetchedRefs.length > 0) {
+    console.log(`[ImageGen] Including ${fetchedRefs.length} reference image(s)`);
+  }
+
+  // Build the parts array: reference images first, then the text prompt
+  const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+
+  // Add reference images as inline data
+  for (const ref of fetchedRefs) {
+    parts.push({
+      inlineData: {
+        mimeType: ref.mimeType,
+        data: arrayBufferToBase64(ref.data),
+      },
+    });
+  }
+
+  // Add the text prompt
+  parts.push({ text: fullPrompt });
 
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: fullPrompt }] }],
+      contents: [{ parts }],
       generationConfig: {
         responseModalities: ['IMAGE'],
       },
@@ -295,12 +425,21 @@ async function generateMask(
  */
 export function hashImageRequest(prompt: string, options: ImageOptions): string {
   const resolved = resolveOptions(options);
+
+  // Include reference URLs in the hash (sorted for consistency)
+  const refUrls = options.references
+    ?.map((r) => `${r.url}:${r.use || 'ref'}`)
+    .sort()
+    .join('|') || '';
+
   const input = JSON.stringify({
     prompt: prompt.toLowerCase().trim(),
     width: resolved.width,
     height: resolved.height,
     transparent: resolved.transparent,
     style: resolved.style,
+    refs: refUrls,
+    neg: options.negativePrompt?.toLowerCase().trim() || '',
   });
 
   // djb2 hash function
@@ -321,5 +460,7 @@ export function requestToOptions(request: CreateImageRequest): ImageOptions {
     style: request.options?.style,
     transparent: request.options?.transparent,
     preset: request.options?.preset,
+    references: request.options?.references,
+    negativePrompt: request.options?.negativePrompt,
   };
 }
