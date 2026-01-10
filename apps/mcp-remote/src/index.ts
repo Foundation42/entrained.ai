@@ -652,6 +652,152 @@ Returns detailed AI analysis and suggestions.`,
       required: ["id", "question"],
     },
   },
+
+  // === Forge Instance Tools (Social Magnetics) ===
+  {
+    name: "forge_instance_create",
+    description: `Create a new instance of a component. Instances are living, mutable deployments of components.
+
+This enables "Social Magnetics" - UI components placed in physical space that receive state and are orchestrated by AI.
+
+Returns the instance with a live URL where the component is rendered with its current props.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        component_id: { type: "string", description: "ID of the component to instantiate" },
+        name: { type: "string", description: "Human-readable name for this instance" },
+        props: {
+          type: "object",
+          description: "Initial props to pass to the component",
+          additionalProperties: true,
+        },
+        placement: {
+          type: "object",
+          description: "Physical/logical placement information",
+          properties: {
+            location: { type: "string", description: "Logical location identifier (e.g., 'downtown-arcade')" },
+            device: { type: "string", description: "Device identifier (e.g., 'kiosk-42')" },
+            geo: {
+              type: "object",
+              description: "Geographic coordinates",
+              properties: {
+                lat: { type: "number", description: "Latitude" },
+                lng: { type: "number", description: "Longitude" },
+              },
+            },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Searchable tags (e.g., ['transit', 'outdoor'])"
+            },
+          },
+        },
+        visibility: { type: "string", enum: ["private", "public", "unlisted"], description: "Visibility level (default: private)" },
+      },
+      required: ["component_id"],
+    },
+  },
+  {
+    name: "forge_instance_get",
+    description: "Get an instance by ID, including its current props and live URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        instance_id: { type: "string", description: "Instance ID (e.g., 'inst-abc123')" },
+      },
+      required: ["instance_id"],
+    },
+  },
+  {
+    name: "forge_instance_list",
+    description: "List instances with optional filtering by component, location, or tags.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        component_id: { type: "string", description: "Filter by component ID" },
+        location: { type: "string", description: "Filter by location" },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Filter by tags (instances with ANY of these tags)"
+        },
+        visibility: { type: "string", enum: ["private", "public", "unlisted"], description: "Filter by visibility" },
+        limit: { type: "number", description: "Maximum results (default: 50)" },
+      },
+    },
+  },
+  {
+    name: "forge_instance_update_props",
+    description: `Update instance props WITHOUT regenerating the component. This is the key capability!
+
+Props are merged with existing props (partial update). To replace all props, use forge_instance_replace_props.
+
+The live URL will immediately reflect the new props.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        instance_id: { type: "string", description: "Instance ID" },
+        props: {
+          type: "object",
+          description: "Props to merge with existing props",
+          additionalProperties: true,
+        },
+      },
+      required: ["instance_id", "props"],
+    },
+  },
+  {
+    name: "forge_instance_replace_props",
+    description: "Replace ALL instance props. Use this to completely reset the props.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        instance_id: { type: "string", description: "Instance ID" },
+        props: {
+          type: "object",
+          description: "New props (replaces all existing props)",
+          additionalProperties: true,
+        },
+      },
+      required: ["instance_id", "props"],
+    },
+  },
+  {
+    name: "forge_instance_delete",
+    description: "Delete an instance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        instance_id: { type: "string", description: "Instance ID to delete" },
+      },
+      required: ["instance_id"],
+    },
+  },
+  {
+    name: "forge_instance_bulk_update",
+    description: `Update props for multiple instances at once. Useful for orchestrating many displays.
+
+Requires at least one filter (component_id, location, tags, or visibility) to prevent accidental mass updates.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        component_id: { type: "string", description: "Filter by component ID" },
+        location: { type: "string", description: "Filter by location" },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Filter by tags"
+        },
+        visibility: { type: "string", enum: ["private", "public", "unlisted"], description: "Filter by visibility" },
+        props: {
+          type: "object",
+          description: "Props to apply to all matching instances",
+          additionalProperties: true,
+        },
+      },
+      required: ["props"],
+    },
+  },
 ];
 
 // Handle tool calls
@@ -1013,6 +1159,97 @@ async function handleToolCall(
       return forgeApi(`/api/forge/${id}/review`, env, {
         method: "POST",
         body: { question },
+      });
+    }
+
+    // === Forge Instance Tool Handlers ===
+    case "forge_instance_create": {
+      const component_id = args.component_id as string;
+      if (!component_id) {
+        throw new Error(`Missing required parameter: component_id`);
+      }
+      return forgeApi(`/api/instances`, env, {
+        method: "POST",
+        body: {
+          component_id,
+          name: args.name,
+          props: args.props,
+          placement: args.placement,
+          visibility: args.visibility,
+        },
+      });
+    }
+
+    case "forge_instance_get": {
+      const instance_id = args.instance_id as string;
+      if (!instance_id) {
+        throw new Error(`Missing required parameter: instance_id`);
+      }
+      return forgeApi(`/api/instances/${instance_id}`, env);
+    }
+
+    case "forge_instance_list": {
+      const params = new URLSearchParams();
+      if (args.component_id) params.set("component_id", args.component_id as string);
+      if (args.location) params.set("location", args.location as string);
+      if (args.tags) params.set("tags", (args.tags as string[]).join(","));
+      if (args.visibility) params.set("visibility", args.visibility as string);
+      if (args.limit) params.set("limit", String(args.limit));
+      const query = params.toString();
+      return forgeApi(`/api/instances${query ? `?${query}` : ""}`, env);
+    }
+
+    case "forge_instance_update_props": {
+      const instance_id = args.instance_id as string;
+      const props = args.props as Record<string, unknown>;
+      if (!instance_id || !props) {
+        throw new Error(`Missing required parameters: instance_id, props`);
+      }
+      return forgeApi(`/api/instances/${instance_id}/props`, env, {
+        method: "PATCH",
+        body: props,
+      });
+    }
+
+    case "forge_instance_replace_props": {
+      const instance_id = args.instance_id as string;
+      const props = args.props as Record<string, unknown>;
+      if (!instance_id || !props) {
+        throw new Error(`Missing required parameters: instance_id, props`);
+      }
+      return forgeApi(`/api/instances/${instance_id}/props`, env, {
+        method: "PUT",
+        body: props,
+      });
+    }
+
+    case "forge_instance_delete": {
+      const instance_id = args.instance_id as string;
+      if (!instance_id) {
+        throw new Error(`Missing required parameter: instance_id`);
+      }
+      return forgeApi(`/api/instances/${instance_id}`, env, {
+        method: "DELETE",
+      });
+    }
+
+    case "forge_instance_bulk_update": {
+      const props = args.props as Record<string, unknown>;
+      if (!props) {
+        throw new Error(`Missing required parameter: props`);
+      }
+      const params = new URLSearchParams();
+      if (args.component_id) params.set("component_id", args.component_id as string);
+      if (args.location) params.set("location", args.location as string);
+      if (args.tags) params.set("tags", (args.tags as string[]).join(","));
+      if (args.visibility) params.set("visibility", args.visibility as string);
+      const query = params.toString();
+      if (!query) {
+        throw new Error(`At least one filter required: component_id, location, tags, or visibility`);
+      }
+      return forgeApi(`/api/instances/bulk?${query}`, env, {
+        method: "PATCH",
+        body: { props },
       });
     }
 
@@ -1484,6 +1721,16 @@ Connect Claude Chat to GoodFaith!
 - forge_create_image - Generate images with Gemini (supports transparency, presets)
 - forge_create_speech - Generate speech with OpenAI TTS (13 voices, custom instructions)
 - forge_search_assets - Search existing assets semantically
+
+## Forge Instance Tools (Social Magnetics)
+
+- forge_instance_create - Create a living instance of a component
+- forge_instance_get - Get instance with current props and live URL
+- forge_instance_list - List instances with filtering
+- forge_instance_update_props - Update props WITHOUT regeneration (key capability!)
+- forge_instance_replace_props - Replace all props
+- forge_instance_delete - Delete an instance
+- forge_instance_bulk_update - Update props across many instances at once
 
 ## Documentation & Health
 
