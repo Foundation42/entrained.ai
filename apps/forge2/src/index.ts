@@ -280,6 +280,9 @@ const scheduled: ExportedHandler<Env>['scheduled'] = async (_event, env, _ctx) =
 // Durable Object for bundler container
 export { ForgeBundler } from './lib/container';
 
+// Durable Object for live instance SSE connections
+export { InstanceLive } from './lib/instance-live';
+
 // Worker entry point
 export default {
   fetch: app.fetch,

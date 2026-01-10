@@ -45,10 +45,19 @@ instance_type = "standard-1"
 name = "BUNDLER"
 class_name = "ForgeBundler"
 
+# Durable Object binding for live instance SSE connections
+[[durable_objects.bindings]]
+name = "INSTANCE_LIVE"
+class_name = "InstanceLive"
+
 # Migration for Durable Objects
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ForgeBundler"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["InstanceLive"]
 
 # Cron trigger to keep bundler container warm
 [triggers]

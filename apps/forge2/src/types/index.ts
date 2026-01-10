@@ -773,6 +773,9 @@ export interface Env {
   // Bundler Container (Durable Object)
   BUNDLER: DurableObjectNamespace;
 
+  // Instance Live SSE connections (Durable Object)
+  INSTANCE_LIVE: DurableObjectNamespace;
+
   // Environment variables
   LLM_PROVIDER: string;
   ANTHROPIC_MODEL: string;
