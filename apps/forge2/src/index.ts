@@ -14,6 +14,7 @@ import type { Env } from './types';
 import searchRoutes from './api/search';
 import assetRoutes from './api/assets';
 import componentRoutes from './api/components';
+import instanceRoutes from './api/instances';
 import generateRoutes from './api/generate';
 import composeRoutes from './api/compose';
 import forgeRoutes from './api/forge';
@@ -55,6 +56,7 @@ app.get('/', (c) => {
       search: '/api/search',
       assets: '/api/assets',
       components: '/api/components',
+      instances: '/api/instances',
       generate: '/api/generate',
       compose: '/api/compose',
       health: '/api/health',
@@ -174,9 +176,20 @@ app.get('/api/docs', (c) => {
 app.route('/api/search', searchRoutes);
 app.route('/api/assets', assetRoutes);
 app.route('/api/components', componentRoutes);
+app.route('/api/instances', instanceRoutes);
 app.route('/api/generate', generateRoutes);
 app.route('/api/compose', composeRoutes);
 app.route('/api/forge', forgeRoutes);
+
+// ===========================================================================
+// Live Instance Route (top-level convenience)
+// ===========================================================================
+
+// Redirect /live/:id to /api/instances/:id/live
+app.get('/live/:id', (c) => {
+  const id = c.req.param('id');
+  return c.redirect(`/api/instances/${id}/live`);
+});
 
 // ===========================================================================
 // Container Status (for MCP health checks)

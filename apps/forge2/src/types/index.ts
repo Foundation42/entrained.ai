@@ -582,6 +582,175 @@ export interface VersionHistoryEntry {
 }
 
 // =============================================================================
+// Instance Service Types
+// =============================================================================
+
+/** Visibility level for instances */
+export type InstanceVisibility = 'private' | 'public' | 'unlisted';
+
+/** Runtime type for instances */
+export type InstanceRuntimeType = 'edge' | 'durable';
+
+/** Upgrade strategy for component versions */
+export type InstanceUpgradeStrategy = 'pin' | 'minor' | 'latest';
+
+/**
+ * Instance - A deployed, mutable instance of a component
+ *
+ * Instances enable "Social Magnetics" - UI components placed in physical space
+ * that receive state and are orchestrated by AI.
+ */
+export interface Instance {
+  /** Unique identifier: "inst-{short-uuid}" */
+  id: string;
+
+  /** Component template this instance uses */
+  component_id: string;
+
+  /** Pinned component version (null = latest) */
+  component_version?: number;
+
+  /** Human-readable name */
+  name?: string;
+
+  /** Owner/creator identifier (for future auth) */
+  owner_id?: string;
+
+  /** Visibility: private, public, unlisted */
+  visibility: InstanceVisibility;
+
+  /** Physical/logical placement */
+  placement?: InstancePlacement;
+
+  /** Runtime configuration */
+  runtime_type: InstanceRuntimeType;
+
+  /** Upgrade policy for component versions */
+  upgrade_strategy: InstanceUpgradeStrategy;
+
+  /** Creation timestamp */
+  created_at: string;
+
+  /** Last update timestamp */
+  updated_at: string;
+}
+
+/**
+ * Instance with its runtime data (props, bindings)
+ */
+export interface InstanceWithData extends Instance {
+  /** Current props (from KV) */
+  props: Record<string, unknown>;
+
+  /** Binding configurations (from KV) */
+  bindings?: Record<string, InstanceBinding>;
+
+  /** Live URL to view the instance */
+  url: string;
+}
+
+/**
+ * Placement information for spatial computing
+ */
+export interface InstancePlacement {
+  /** Logical location identifier */
+  location?: string;
+
+  /** Device identifier */
+  device?: string;
+
+  /** Geographic coordinates */
+  geo?: { lat: number; lng: number };
+
+  /** Searchable tags */
+  tags?: string[];
+}
+
+/**
+ * Binding - connects a prop to a live data source
+ */
+export interface InstanceBinding {
+  /** Data source type */
+  source: 'kv' | 'api' | 'do' | 'static';
+
+  /** Path or URL to the data */
+  path: string;
+
+  /** Refresh strategy */
+  strategy?:
+    | { type: 'static' }
+    | { type: 'poll'; interval: number }
+    | { type: 'sse'; url: string }
+    | { type: 'webhook'; secret: string };
+}
+
+/**
+ * D1 record for instances table
+ */
+export interface InstanceRecord {
+  id: string;
+  component_id: string;
+  component_version: number | null;
+  name: string | null;
+  owner_id: string | null;
+  visibility: string;
+  location: string | null;
+  device: string | null;
+  geo_lat: number | null;
+  geo_lng: number | null;
+  tags: string | null; // JSON array
+  runtime_type: string;
+  upgrade_strategy: string;
+  created_at: number; // Unix timestamp (ms)
+  updated_at: number; // Unix timestamp (ms)
+}
+
+/**
+ * Options for listing instances
+ */
+export interface ListInstancesOptions {
+  component_id?: string;
+  owner_id?: string;
+  visibility?: InstanceVisibility;
+  location?: string;
+  tags?: string[];
+  limit?: number;
+  offset?: number;
+  order_by?: 'created_at' | 'updated_at';
+  order_dir?: 'asc' | 'desc';
+}
+
+/**
+ * Create instance request
+ */
+export interface CreateInstanceRequest {
+  component_id: string;
+  component_version?: number;
+  name?: string;
+  owner_id?: string;
+  visibility?: InstanceVisibility;
+  props?: Record<string, unknown>;
+  bindings?: Record<string, InstanceBinding>;
+  placement?: InstancePlacement;
+  runtime_type?: InstanceRuntimeType;
+  upgrade_strategy?: InstanceUpgradeStrategy;
+}
+
+/**
+ * Update instance props request (partial update)
+ */
+export interface UpdateInstancePropsRequest {
+  props: Record<string, unknown>;
+}
+
+/**
+ * Update instance bindings request
+ */
+export interface UpdateInstanceBindingsRequest {
+  bindings: Record<string, InstanceBinding>;
+}
+
+// =============================================================================
 // Cloudflare Bindings
 // =============================================================================
 
